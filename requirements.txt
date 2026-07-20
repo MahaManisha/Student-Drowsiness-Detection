@@ -1,0 +1,23 @@
+# Computer Vision & Real-Time Frame Processing
+opencv-python>=4.8.0.76
+
+# Machine Learning & Facial Landmark Detection
+mediapipe>=0.10.9
+
+# Numerical & Scientific Computing
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
+
+# Data Processing & Session Analytics
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# Real-Time Monitoring Dashboard
+streamlit>=1.28.0
+
+# Audio Alarm System (Cross-Platform Audio Playback)
+pygame>=2.5.0
+playsound==1.2.2
+
+# Testing Framework
+pytest>=7.4.0

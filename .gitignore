@@ -1,0 +1,62 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# IDE and Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Datasets and heavy binary files
+datasets/*
+!datasets/.gitkeep
+
+# Model checkpoints and weights
+assets/models/*.h5
+assets/models/*.pt
+assets/models/*.onnx
+assets/models/*.tflite
+assets/models/*.pkl
+
+# Logs and outputs generated during runtime
+output/*
+!output/.gitkeep
+*.log
+
+# Pytest and coverage outputs
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS specific files
+.DS_Store
+Thumbs.db
