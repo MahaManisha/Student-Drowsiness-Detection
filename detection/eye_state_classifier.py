@@ -22,6 +22,7 @@ This module performs single-frame classification only (Phase 5.1).
 It does NOT perform temporal frame counting, blink detection, or multi-frame drowsiness state evaluation.
 """
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -45,6 +46,16 @@ class EyeState(str, Enum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
     UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class EyeStateResult:
+    """
+    Structured object representing the single-frame classification output of the average EAR.
+    """
+    state: EyeState
+    ear_value: Optional[float]
+    threshold: float
 
 
 class EyeStateClassifier:
@@ -301,3 +312,50 @@ class EyeStateClassifier:
             "threshold_used": eval_threshold,
             "avg_ear": avg_ear,
         }
+
+    def classify_average_ear(
+        self,
+        avg_ear: Optional[float],
+        threshold: Optional[float] = None,
+    ) -> EyeStateResult:
+        """
+        Classifies the single-frame overall eye state (OPEN, CLOSED, or UNKNOWN)
+        using the Average EAR calculated by the EAR module.
+
+        Classification Rule:
+            - If avg_ear is None or invalid: EyeState.UNKNOWN
+            - If avg_ear >= threshold: EyeState.OPEN
+            - If avg_ear < threshold: EyeState.CLOSED
+
+        Args:
+            avg_ear (Optional[float]): Average Eye Aspect Ratio value to evaluate.
+            threshold (Optional[float]): Optional threshold override. Defaults to self.ear_threshold.
+
+        Returns:
+            EyeStateResult: Structured result object containing the eye state, EAR value, and threshold used.
+        """
+        eval_threshold = threshold if threshold is not None else self.ear_threshold
+        logger.debug(f"Classifying average EAR: {avg_ear} with threshold: {eval_threshold}")
+
+        if avg_ear is None:
+            logger.warning("Average EAR value is None. Classifying overall state as UNKNOWN.")
+            return EyeStateResult(state=EyeState.UNKNOWN, ear_value=None, threshold=eval_threshold)
+
+        try:
+            ear_float = float(avg_ear)
+            # Safe physiological bound checks (valid EAR is generally 0.0 to 1.0)
+            if not (0.0 <= ear_float <= 1.0):
+                logger.warning(f"Physiologically abnormal average EAR value: {ear_float:.4f}. Classifying state as UNKNOWN.")
+                return EyeStateResult(state=EyeState.UNKNOWN, ear_value=ear_float, threshold=eval_threshold)
+
+            if ear_float >= eval_threshold:
+                state = EyeState.OPEN
+            else:
+                state = EyeState.CLOSED
+
+            logger.debug(f"Average EAR classification result: {state.value} (EAR: {ear_float:.4f}, Threshold: {eval_threshold:.3f})")
+            return EyeStateResult(state=state, ear_value=ear_float, threshold=eval_threshold)
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Error casting average EAR value '{avg_ear}' to float: {e}")
+            return EyeStateResult(state=EyeState.UNKNOWN, ear_value=None, threshold=eval_threshold)

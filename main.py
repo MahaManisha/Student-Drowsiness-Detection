@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor, EARCalculator
+from detection import FaceMeshDetector, EyeLandmarkExtractor, EARCalculator, EyeStateClassifier
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -52,6 +52,9 @@ class StudentDrowsinessApp:
 
         # 4. Initialize EAR Calculator Module
         self.ear_calculator = EARCalculator()
+
+        # 5. Initialize Eye State Classifier Module
+        self.classifier = EyeStateClassifier()
 
         self.is_running: bool = False
 
@@ -134,23 +137,46 @@ class StudentDrowsinessApp:
                     cv2.LINE_AA,
                 )
 
-                # Step 5: Render continuous EAR metrics overlay (formatted to 3 decimal places)
-                if has_face and (left_ear is not None or right_ear is not None):
-                    l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
-                    r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
-                    avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
-                    ear_overlay = f"Left EAR: {l_str} | Right EAR: {r_str} | Avg EAR: {avg_str}"
+                # Step 5: Classify Eye State and Render Metrics Overlay (HUD Style)
+                # Classify state using the calculated average EAR
+                state_result = self.classifier.classify_average_ear(avg_ear)
+                
+                # Format string representations of EAR values
+                l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
+                r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
+                avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
+                thresh_val = state_result.threshold
+                state_str = state_result.state.value
 
-                    cv2.putText(
-                        frame,
-                        ear_overlay,
-                        (15, 95),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (255, 255, 0),
-                        2,
-                        cv2.LINE_AA,
-                    )
+                # Draw a premium semi-transparent HUD background box for the metrics
+                hud_overlay = frame.copy()
+                # Draw dark gray rectangle on top-left area
+                cv2.rectangle(hud_overlay, (10, 80), (320, 245), (15, 15, 15), -1)
+                alpha = 0.7
+                cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
+
+                # Set up typography styling
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                scale = 0.55
+                text_color = (245, 245, 245)  # Soft white
+                thickness = 2
+                line_type = cv2.LINE_AA
+
+                # Draw the individual EAR values and Threshold inside the HUD box
+                cv2.putText(frame, f"Left EAR : {l_str}", (20, 105), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Right EAR : {r_str}", (20, 135), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Average EAR : {avg_str}", (20, 165), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Threshold : {thresh_val:.3f}", (20, 195), font, scale, text_color, thickness, line_type)
+
+                # Color-code the Eye State to make it immediately recognizable (Green = OPEN, Red = CLOSED, Gray = UNKNOWN)
+                if state_result.state == "OPEN":
+                    state_color = (0, 255, 0)      # Vivid Green
+                elif state_result.state == "CLOSED":
+                    state_color = (0, 0, 255)      # Vivid Red
+                else:
+                    state_color = (130, 130, 130)  # Neutral Gray
+
+                cv2.putText(frame, f"Eye State : {state_str}", (20, 225), font, 0.6, state_color, 2, line_type)
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)
