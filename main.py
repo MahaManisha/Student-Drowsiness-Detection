@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor
+from detection import FaceMeshDetector, EyeLandmarkExtractor, EARCalculator
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -25,7 +25,7 @@ class StudentDrowsinessApp:
 
     def __init__(self) -> None:
         """
-        Initializes core system modules: Configuration, Camera Stream, Face Mesh Detector, and Eye Landmark Extractor.
+        Initializes core system modules: Configuration, Camera Stream, Face Mesh Detector, Eye Landmark Extractor, and EAR Calculator.
         """
         logger.info("==================================================")
         logger.info("  Starting Student Drowsiness Detection System   ")
@@ -49,6 +49,9 @@ class StudentDrowsinessApp:
 
         # 3. Initialize Eye Landmark Extractor Module
         self.eye_extractor = EyeLandmarkExtractor()
+
+        # 4. Initialize EAR Calculator Module
+        self.ear_calculator = EARCalculator()
 
         self.is_running: bool = False
 
@@ -80,7 +83,9 @@ class StudentDrowsinessApp:
                 # Step 2: Detect facial landmarks using Face Mesh
                 has_face, all_landmarks = self.detector.detect_landmarks(frame)
 
-                # Step 3: Draw facial landmark mesh overlays & extract eye landmarks
+                right_ear, left_ear, avg_ear = None, None, None
+
+                # Step 3: Draw facial landmark mesh overlays, extract eye landmarks, and calculate EAR
                 if has_face and all_landmarks:
                     frame = self.detector.draw_landmarks(frame)
 
@@ -90,8 +95,22 @@ class StudentDrowsinessApp:
                         face_landmarks, frame_shape=frame.shape
                     )
 
-                    # Render optional cyan eye landmark highlights
+                    # Render cyan eye landmark highlights
                     frame = self.eye_extractor.draw_eye_landmarks(frame, right_eye, left_eye)
+
+                    # Calculate Eye Aspect Ratio (EAR) continuously for every frame
+                    right_ear, left_ear, avg_ear = self.ear_calculator.calculate_ear(
+                        right_eye, left_eye
+                    )
+
+                    # Validate range and detect step spikes
+                    self.ear_calculator.validate_ear_value(avg_ear)
+                    if hasattr(self, "_last_avg_ear"):
+                        self.ear_calculator.detect_ear_spike(avg_ear, self._last_avg_ear)
+                    self._last_avg_ear = avg_ear
+
+                    # Periodically log EAR metrics (every 30 frames)
+                    self.ear_calculator.log_ear_periodically(right_ear, left_ear, avg_ear)
 
                     num_landmarks = len(face_landmarks)
                     num_right = len(right_eye) if right_eye is not None else 0
@@ -101,6 +120,7 @@ class StudentDrowsinessApp:
                 else:
                     status_text = "Searching for Face..."
                     status_color = (0, 0, 255)
+
 
                 # Step 4: Render UI status banner on frame
                 cv2.putText(
@@ -113,6 +133,24 @@ class StudentDrowsinessApp:
                     2,
                     cv2.LINE_AA,
                 )
+
+                # Step 5: Render continuous EAR metrics overlay (formatted to 3 decimal places)
+                if has_face and (left_ear is not None or right_ear is not None):
+                    l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
+                    r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
+                    avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
+                    ear_overlay = f"Left EAR: {l_str} | Right EAR: {r_str} | Avg EAR: {avg_str}"
+
+                    cv2.putText(
+                        frame,
+                        ear_overlay,
+                        (15, 95),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 0),
+                        2,
+                        cv2.LINE_AA,
+                    )
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)

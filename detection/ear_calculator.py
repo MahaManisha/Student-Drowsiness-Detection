@@ -61,7 +61,7 @@ class EARCalculator:
 
     def __init__(self, ear_threshold: Optional[float] = None) -> None:
         """
-        Initializes the EARCalculator with configurable threshold parameters.
+        Initializes the EARCalculator with configurable threshold parameters and tracking state.
 
         Args:
             ear_threshold (Optional[float]): Threshold value below which the eye is considered closed.
@@ -70,7 +70,96 @@ class EARCalculator:
         self.ear_threshold: float = (
             float(ear_threshold) if ear_threshold is not None else DEFAULT_EAR_THRESHOLD
         )
+        self.frame_counter: int = 0
+        self.previous_avg_ear: Optional[float] = None
+
         logger.info(f"EARCalculator initialized with EAR threshold: {self.ear_threshold:.3f}")
+
+    def validate_ear_value(
+        self,
+        ear_value: Optional[float],
+        min_valid: float = 0.0,
+        max_valid: float = 1.0,
+    ) -> bool:
+        """
+        Validates whether a calculated EAR value falls within realistic physiological bounds [0.0, 1.0].
+
+        Args:
+            ear_value (Optional[float]): EAR value to validate.
+            min_valid (float): Minimum valid EAR bound (default: 0.0).
+            max_valid (float): Maximum valid EAR bound (default: 1.0).
+
+        Returns:
+            bool: True if value is within physiological range, False otherwise.
+        """
+        if ear_value is None:
+            return False
+
+        if min_valid <= ear_value <= max_valid:
+            return True
+        else:
+            logger.warning(
+                f"Abnormal EAR value detected: {ear_value:.4f} (outside expected range [{min_valid:.1f}, {max_valid:.1f}])."
+            )
+            return False
+
+    def detect_ear_spike(
+        self,
+        current_ear: Optional[float],
+        previous_ear: Optional[float],
+        max_allowed_delta: float = 0.35,
+    ) -> bool:
+        """
+        Detects whether an abnormal frame-to-frame step discontinuity (spike) occurred in EAR values.
+
+        Args:
+            current_ear (Optional[float]): Current frame EAR value.
+            previous_ear (Optional[float]): Previous frame EAR value.
+            max_allowed_delta (float): Maximum acceptable frame-to-frame delta (default: 0.35).
+
+        Returns:
+            bool: True if an abnormal spike was detected, False otherwise.
+        """
+        if current_ear is None or previous_ear is None:
+            return False
+
+        delta = abs(current_ear - previous_ear)
+        if delta > max_allowed_delta:
+            logger.warning(
+                f"Abnormal EAR step spike detected: delta={delta:.4f} "
+                f"(previous={previous_ear:.4f}, current={current_ear:.4f}, max_allowed={max_allowed_delta:.2f})."
+            )
+            return True
+        return False
+
+    def log_ear_periodically(
+        self,
+        right_ear: Optional[float],
+        left_ear: Optional[float],
+        avg_ear: Optional[float],
+        log_interval: int = 30,
+    ) -> None:
+        """
+        Logs EAR metric values periodically to system logs at specified frame intervals.
+
+        Args:
+            right_ear (Optional[float]): Right eye EAR.
+            left_ear (Optional[float]): Left eye EAR.
+            avg_ear (Optional[float]): Combined average EAR.
+            log_interval (int): Frame interval for periodic logging (default: 30 frames).
+        """
+        self.frame_counter += 1
+
+        if self.frame_counter % log_interval == 0:
+            r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
+            l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
+            avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
+
+            logger.info(
+                f"[Frame {self.frame_counter}] Periodic EAR Tracking -> "
+                f"Left EAR: {l_str} | Right EAR: {r_str} | Avg EAR: {avg_str}"
+            )
+
 
     def validate_eye_landmarks(self, eye_landmarks: Any) -> bool:
         """
@@ -192,22 +281,55 @@ class EARCalculator:
         left_eye_landmarks: Any,
     ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
         """
-        Computes EAR values for both right and left eyes, as well as their combined average.
+        Computes Eye Aspect Ratio (EAR) independently for the right and left eyes,
+        and calculates their overall average EAR value.
 
         Args:
-            right_eye_landmarks (Any): Landmark points for the right eye.
-            left_eye_landmarks (Any): Landmark points for the left eye.
+            right_eye_landmarks (Any): Landmark points for the subject's right eye.
+            left_eye_landmarks (Any): Landmark points for the subject's left eye.
 
         Returns:
             Tuple[Optional[float], Optional[float], Optional[float]]:
-                A tuple of (right_ear, left_ear, avg_ear). Elements are None if extraction/validation fails.
+                Structured tuple containing (right_ear, left_ear, avg_ear).
+                Individual elements are None if landmark validation fails.
         """
         right_ear = self.calculate_single_eye_ear(right_eye_landmarks)
         left_ear = self.calculate_single_eye_ear(left_eye_landmarks)
         avg_ear = self.calculate_avg_ear(right_ear, left_ear)
 
+        logger.debug(
+            f"Calculated dual-eye EAR - Right: {right_ear}, Left: {left_ear}, Avg: {avg_ear}"
+        )
         return right_ear, left_ear, avg_ear
 
+    def compute_ear_values(
+        self,
+        right_eye_landmarks: Any,
+        left_eye_landmarks: Any,
+    ) -> Dict[str, Optional[float]]:
+        """
+        Computes independent right eye, left eye, and average EAR values and returns them
+        in a structured dictionary format.
+
+        Args:
+            right_eye_landmarks (Any): Landmark points for the subject's right eye.
+            left_eye_landmarks (Any): Landmark points for the subject's left eye.
+
+        Returns:
+            Dict[str, Optional[float]]: Structured dictionary with keys:
+                - "right_ear": Optional[float]
+                - "left_ear": Optional[float]
+                - "avg_ear": Optional[float]
+        """
+        right_ear, left_ear, avg_ear = self.calculate_ear(
+            right_eye_landmarks, left_eye_landmarks
+        )
+
+        return {
+            "right_ear": right_ear,
+            "left_ear": left_ear,
+            "avg_ear": avg_ear,
+        }
 
     def calculate_avg_ear(
         self,
@@ -215,23 +337,29 @@ class EARCalculator:
         left_ear: Optional[float],
     ) -> Optional[float]:
         """
-        Computes the arithmetic average of right and left Eye Aspect Ratios.
+        Computes the arithmetic average of right and left Eye Aspect Ratios safely.
+
+        If one eye is occluded or unreadable, returns the single valid eye EAR
+        to prevent complete loss of tracking.
 
         Args:
             right_ear (Optional[float]): EAR value for the right eye.
             left_ear (Optional[float]): EAR value for the left eye.
 
         Returns:
-            Optional[float]: Average EAR value, or individual EAR if only one eye is valid, or None if both are None.
+            Optional[float]: Average EAR float value, or single eye EAR if only one eye is valid, or None if both are None.
         """
         if right_ear is not None and left_ear is not None:
-            return (right_ear + left_ear) / 2.0
+            return float((right_ear + left_ear) / 2.0)
         elif right_ear is not None:
-            return right_ear
+            logger.warning("Left eye EAR unavailable; falling back to right eye EAR.")
+            return float(right_ear)
         elif left_ear is not None:
-            return left_ear
+            logger.warning("Right eye EAR unavailable; falling back to left eye EAR.")
+            return float(left_ear)
         else:
             return None
+
 
     def is_eye_closed(
         self,
