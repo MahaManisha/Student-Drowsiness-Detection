@@ -46,6 +46,8 @@ assets/models/*.pt
 assets/models/*.onnx
 assets/models/*.tflite
 assets/models/*.pkl
+assets/models/*.task
+
 
 # Logs and outputs generated during runtime
 output/*

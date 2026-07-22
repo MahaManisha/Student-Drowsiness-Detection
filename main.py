@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector
+from detection import FaceMeshDetector, EyeLandmarkExtractor
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -25,7 +25,7 @@ class StudentDrowsinessApp:
 
     def __init__(self) -> None:
         """
-        Initializes core system modules: Configuration, Camera Stream, and Face Mesh Detector.
+        Initializes core system modules: Configuration, Camera Stream, Face Mesh Detector, and Eye Landmark Extractor.
         """
         logger.info("==================================================")
         logger.info("  Starting Student Drowsiness Detection System   ")
@@ -46,6 +46,9 @@ class StudentDrowsinessApp:
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         )
+
+        # 3. Initialize Eye Landmark Extractor Module
+        self.eye_extractor = EyeLandmarkExtractor()
 
         self.is_running: bool = False
 
@@ -77,11 +80,23 @@ class StudentDrowsinessApp:
                 # Step 2: Detect facial landmarks using Face Mesh
                 has_face, all_landmarks = self.detector.detect_landmarks(frame)
 
-                # Step 3: Draw facial landmark mesh overlays
-                if has_face:
+                # Step 3: Draw facial landmark mesh overlays & extract eye landmarks
+                if has_face and all_landmarks:
                     frame = self.detector.draw_landmarks(frame)
-                    num_landmarks = len(all_landmarks[0]) if all_landmarks else 0
-                    status_text = f"Face Mesh Active ({num_landmarks} landmarks)"
+
+                    # Extract right and left eye landmark subsets
+                    face_landmarks = all_landmarks[0]
+                    right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(
+                        face_landmarks, frame_shape=frame.shape
+                    )
+
+                    # Render optional cyan eye landmark highlights
+                    frame = self.eye_extractor.draw_eye_landmarks(frame, right_eye, left_eye)
+
+                    num_landmarks = len(face_landmarks)
+                    num_right = len(right_eye) if right_eye is not None else 0
+                    num_left = len(left_eye) if left_eye is not None else 0
+                    status_text = f"Face Mesh Active ({num_landmarks} pts | Eyes: R={num_right}, L={num_left})"
                     status_color = (0, 255, 0)
                 else:
                     status_text = "Searching for Face..."

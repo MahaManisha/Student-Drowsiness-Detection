@@ -31,6 +31,10 @@ SOUNDS_DIR = ASSETS_DIR / "sounds"
 ALARM_SOUND_PATH = SOUNDS_DIR / "alarm.wav"
 SESSION_LOG_CSV = LOGS_DIR / "drowsiness_session_log.csv"
 FACIAL_LANDMARK_MODEL_PATH = MODELS_DIR / "shape_predictor_68_face_landmarks.dat"
+FACE_LANDMARKER_TASK_PATH = MODELS_DIR / "face_landmarker.task"
+FACE_LANDMARKER_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+)
 
 # Ensure runtime output directories exist
 for directory in [OUTPUT_DIR, LOGS_DIR, RECORDINGS_DIR, REPORTS_DIR, ASSETS_DIR, SOUNDS_DIR, MODELS_DIR]:
@@ -55,7 +59,16 @@ FRAME_BUFFER_SIZE = 2
 
 
 # ==============================================================================
-# 3. DETECTION THRESHOLDS (PLACEHOLDER VALUES)
+# 3. FACIAL LANDMARK INDEX CONFIGURATIONS (MEDIAPIPE FACE MESH)
+# ==============================================================================
+# 6-Point MediaPipe Face Mesh landmark indices for Eye Aspect Ratio (EAR) computation.
+# Points map to [P1 (outer/inner corner), P2 (top-1), P3 (top-2), P4 (inner/outer corner), P5 (bottom-2), P6 (bottom-1)]
+RIGHT_EYE_LANDMARK_INDICES = [33, 160, 158, 133, 153, 144]
+LEFT_EYE_LANDMARK_INDICES = [362, 385, 387, 263, 373, 380]
+
+
+# ==============================================================================
+# 4. DETECTION THRESHOLDS (PLACEHOLDER VALUES)
 # ==============================================================================
 # Eye Aspect Ratio (EAR) threshold below which an eye is considered closed
 EAR_THRESHOLD = 0.25
