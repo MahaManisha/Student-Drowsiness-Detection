@@ -119,6 +119,27 @@ HEAD_YAW_SIDE_THRESHOLD = 20.0   # Sideways head turn
 
 
 # ==============================================================================
+# 4. DROWSINESS DECISION ENGINE CONFIGURATIONS (Phase 11.2)
+# ==============================================================================
+# Maximum allowed blink duration (in seconds) before flagged as abnormal
+DECISION_MAX_BLINK_DURATION = 0.50
+
+# Maximum eye closure duration (in seconds) before flagging highly drowsy state
+DECISION_MAX_EYE_CLOSURE_DURATION = 3.0
+
+# Yawn frequency limit (number of completed yawns to trigger state transitions)
+DECISION_YAWN_FREQUENCY_LIMIT = 2
+
+# Head pitch angle downward limit (in degrees) before flagging head nodding posture
+DECISION_HEAD_PITCH_LIMIT = 15.0
+
+# Drowsiness score range boundaries for state mapping (0-100 scale)
+DECISION_SCORE_ALERT_LIMIT = 30.0
+DECISION_SCORE_SLIGHTLY_DROWSY_LIMIT = 50.0
+DECISION_SCORE_DROWSY_LIMIT = 80.0
+
+
+# ==============================================================================
 # 4. ALERT & ALARM SYSTEM SETTINGS
 # ==============================================================================
 # Enable / disable audio alarm playback

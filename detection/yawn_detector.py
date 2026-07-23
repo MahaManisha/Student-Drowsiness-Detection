@@ -195,6 +195,48 @@ class YawnDetector:
         """
         return self.consecutive_open_frames
 
+    def get_open_frame_count(self) -> int:
+        """
+        Retrieves the current streak of consecutive open frames (alias).
+
+        Returns:
+            int: Streak frame count.
+        """
+        return self.consecutive_open_frames
+
+    def get_open_duration_seconds(self) -> float:
+        """
+        Calculates the active yawn/open duration in seconds.
+
+        Returns:
+            float: Current yawn duration.
+        """
+        return self.get_yawn_duration_seconds()
+
+    def get_open_duration(self) -> float:
+        """
+        Calculates the active yawn/open duration in seconds (alias).
+
+        Returns:
+            float: Current yawn duration.
+        """
+        return self.get_yawn_duration_seconds()
+
+    def get_mouth_state(self, mar_value: Optional[float] = None) -> MouthState:
+        """
+        Retrieves the classified MouthState. If mar_value is not provided,
+        returns OPEN if currently in an active yawn, CLOSED otherwise.
+
+        Args:
+            mar_value (Optional[float]): Computed Mouth Aspect Ratio for the current frame.
+
+        Returns:
+            MouthState: The classified mouth state enum.
+        """
+        if mar_value is not None:
+            return self.classify_mouth_state(mar_value)
+        return MouthState.OPEN if self.is_active_yawn else MouthState.CLOSED
+
     def get_consecutive_closed_frames(self) -> int:
         """
         Retrieves the current streak of consecutive frames where the mouth is classified as closed.

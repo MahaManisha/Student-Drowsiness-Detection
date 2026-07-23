@@ -8,6 +8,7 @@ from detection.mouth_landmark_extractor import MouthLandmarkExtractor
 from detection.mar_calculator import MARCalculator
 from detection.yawn_detector import YawnDetector, MouthState
 from detection.head_pose_estimator import HeadPoseEstimator, HeadPoseResult
+from detection.drowsiness_decision_engine import StudentDrowsinessDecisionEngine, DrowsinessIntermediateDecision, DrowsinessState, DrowsinessResult
 
 __all__ = [
     "FaceMeshDetector",
@@ -19,6 +20,10 @@ __all__ = [
     "MouthState",
     "HeadPoseEstimator",
     "HeadPoseResult",
+    "StudentDrowsinessDecisionEngine",
+    "DrowsinessIntermediateDecision",
+    "DrowsinessState",
+    "DrowsinessResult",
     "EyeStateClassifier",
     "EyeState",
     "EyeStateResult",

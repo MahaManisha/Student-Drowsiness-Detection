@@ -21,6 +21,13 @@ def test_yawn_detector_initialization():
     assert detector.is_active_yawn is False
     assert detector.frame_counter == 0
 
+    # Verify new interface compatibility getters (Phase 11 getters validation)
+    assert detector.get_yawn_count() == 0
+    assert detector.get_open_frame_count() == 0
+    assert detector.get_open_duration_seconds() == 0.0
+    assert detector.get_open_duration() == 0.0
+    assert detector.get_mouth_state() == MouthState.CLOSED
+
 
 def test_yawn_detector_config_fallbacks():
     """Verify config defaults are loaded when constructor arguments are omitted."""

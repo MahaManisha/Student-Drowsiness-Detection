@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, HeadPoseEstimator, HeadPoseResult, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
+from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, HeadPoseEstimator, HeadPoseResult, StudentDrowsinessDecisionEngine, DrowsinessState, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -66,6 +66,7 @@ class StudentDrowsinessApp:
             min_blink_duration=getattr(config, "MIN_BLINK_DURATION_FRAMES", 2),
             max_blink_duration=getattr(config, "MAX_BLINK_DURATION_FRAMES", 15),
         )
+        self.decision_engine = StudentDrowsinessDecisionEngine()
 
         self.is_running: bool = False
 
@@ -166,6 +167,24 @@ class StudentDrowsinessApp:
                     all_landmarks[0] if (has_face and all_landmarks) else None,
                     (frame.shape[0], frame.shape[1])
                 )
+                # Step 3.5: Run Drowsiness Decision Engine
+                eye_payload = {
+                    "blink_count": self.temporal_analyzer.get_blink_count(),
+                    "consecutive_closed_frames": self.temporal_analyzer.get_closed_frame_count(),
+                    "closed_duration_seconds": self.temporal_analyzer.get_closed_duration_seconds()
+                }
+                yawn_payload = {
+                    "yawn_count": self.yawn_detector.get_yawn_count(),
+                    "consecutive_open_frames": self.yawn_detector.get_open_frame_count(),
+                    "yawn_duration_seconds": self.yawn_detector.get_open_duration_seconds()
+                }
+                pose_payload = {
+                    "yaw": pose_result.yaw,
+                    "pitch": pose_result.pitch,
+                    "roll": pose_result.roll,
+                    "valid": pose_result.valid
+                }
+                decision_metrics = self.decision_engine.update(eye_payload, yawn_payload, pose_payload)
 
                 # Step 4: Render UI status banner on frame
                 cv2.putText(
@@ -217,6 +236,8 @@ class StudentDrowsinessApp:
                 cv2.rectangle(hud_overlay, (10, 80), (320, 460), (15, 15, 15), -1)
                 # Draw right metrics box for head pose (symmetrical size)
                 cv2.rectangle(hud_overlay, (330, 80), (630, 215), (15, 15, 15), -1)
+                # Draw right metrics box for drowsiness decision engine (symmetrical size)
+                cv2.rectangle(hud_overlay, (330, 230), (630, 390), (15, 15, 15), -1)
                 alpha = 0.7
                 cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
 
@@ -264,24 +285,68 @@ class StudentDrowsinessApp:
                 roll_val = pose_result.roll
                 
                 if pose_result.valid:
-                    pitch_str = f"{pitch_val:.1f}\u00b0"
-                    yaw_str = f"{yaw_val:.1f}\u00b0"
-                    roll_str = f"{roll_val:.1f}\u00b0"
+                    pitch_val_str = f"{pitch_val:.1f}"
+                    yaw_val_str = f"{yaw_val:.1f}"
+                    roll_val_str = f"{roll_val:.1f}"
+                    
+                    p_text = f"Pitch : {pitch_val_str}"
+                    (pw, ph), _ = cv2.getTextSize(p_text, font, scale, thickness)
+                    cv2.putText(frame, p_text, (340, 105), font, scale, text_color, thickness, line_type)
+                    cv2.circle(frame, (340 + pw + 3, 105 - ph + 2), 2, text_color, 1)
+
+                    y_text = f"Yaw : {yaw_val_str}"
+                    (yw, yh), _ = cv2.getTextSize(y_text, font, scale, thickness)
+                    cv2.putText(frame, y_text, (340, 135), font, scale, text_color, thickness, line_type)
+                    cv2.circle(frame, (340 + yw + 3, 135 - yh + 2), 2, text_color, 1)
+
+                    r_text = f"Roll : {roll_val_str}"
+                    (rw, rh), _ = cv2.getTextSize(r_text, font, scale, thickness)
+                    cv2.putText(frame, r_text, (340, 165), font, scale, text_color, thickness, line_type)
+                    cv2.circle(frame, (340 + rw + 3, 165 - rh + 2), 2, text_color, 1)
+                    
                     pose_status_str = "TRACKING"
                     pose_status_color = (0, 255, 0)      # Vivid Green
                 else:
-                    pitch_str = "N/A"
-                    yaw_str = "N/A"
-                    roll_str = "N/A"
+                    cv2.putText(frame, "Pitch : N/A", (340, 105), font, scale, text_color, thickness, line_type)
+                    cv2.putText(frame, "Yaw : N/A", (340, 135), font, scale, text_color, thickness, line_type)
+                    cv2.putText(frame, "Roll : N/A", (340, 165), font, scale, text_color, thickness, line_type)
                     pose_status_str = "SEARCHING"
                     pose_status_color = (0, 0, 255)      # Vivid Red
-
-                cv2.putText(frame, f"Pitch : {pitch_str}", (340, 105), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Yaw : {yaw_str}", (340, 135), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Roll : {roll_str}", (340, 165), font, scale, text_color, thickness, line_type)
                 
                 cv2.putText(frame, "Status : ", (340, 195), font, scale, text_color, thickness, line_type)
                 cv2.putText(frame, pose_status_str, (415, 195), font, 0.6, pose_status_color, 2, line_type)
+
+                # Render Phase 11.5 DrowsinessDecisionEngine metrics (bottom-right box)
+                score_val = decision_metrics["drowsiness_score"]
+                state_raw = decision_metrics["drowsiness_state"]
+                state_str = state_raw.replace("_", " ")
+
+                # Color-code drowsiness state
+                if state_raw == "ALERT":
+                    state_color = (0, 255, 0)         # Vivid Green
+                elif state_raw == "SLIGHTLY_DROWSY":
+                    state_color = (0, 255, 255)       # Vivid Yellow
+                elif state_raw == "DROWSY":
+                    state_color = (0, 165, 255)       # Orange
+                else:  # HIGHLY_DROWSY
+                    state_color = (0, 0, 255)         # Vivid Red
+
+                # Extract intermediate decision parameters for confidence indicator
+                inter_dec = decision_metrics.get("intermediate_decision")
+                if inter_dec is not None:
+                    confidence_pct = inter_dec.get("confidence_score", 0.0) * 100.0
+                    cooccurrence = inter_dec.get("signal_cooccurrence_count", 0)
+                else:
+                    confidence_pct = 0.0
+                    cooccurrence = 0
+
+                cv2.putText(frame, f"Score : {score_val:.0f}", (340, 255), font, scale, text_color, thickness, line_type)
+                
+                cv2.putText(frame, "State : ", (340, 285), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, state_str, (405, 285), font, 0.6, state_color, 2, line_type)
+                
+                cv2.putText(frame, f"Confidence : {confidence_pct:.0f}%", (340, 315), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Co-occurrence : {cooccurrence} / 3", (340, 345), font, scale, text_color, thickness, line_type)
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)
