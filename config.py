@@ -66,6 +66,24 @@ FRAME_BUFFER_SIZE = 2
 RIGHT_EYE_LANDMARK_INDICES = [33, 160, 158, 133, 153, 144]
 LEFT_EYE_LANDMARK_INDICES = [362, 385, 387, 263, 373, 380]
 
+# 8-Point MediaPipe Face Mesh landmark indices for Mouth Aspect Ratio (MAR) computation.
+# Inner lip points are selected for the ratio computation to measure the actual opening aperture:
+# - Right Corner: 78
+# - Left Corner: 308
+# - Right Vertical Pair: Top = 81, Bottom = 178
+# - Center Vertical Pair: Top = 13, Bottom = 14
+# - Left Vertical Pair: Top = 311, Bottom = 402
+# Contribution:
+# Width = ||308 - 78|| (Denominator)
+# Height = ||81 - 178|| + ||13 - 14|| + ||311 - 402|| (Numerator)
+# MAR Formula: Height / (3.0 * Width)
+MOUTH_INNER_LIP_INDICES = [78, 81, 13, 311, 308, 402, 14, 178]
+
+# 8-Point landmarks mapping for the outer lip boundary, used for visual HUD rendering/alignment check:
+# - Corners: 61, 291
+# - Vertical pairs: (37, 91), (0, 17), (267, 321)
+MOUTH_OUTER_LIP_INDICES = [61, 37, 0, 267, 291, 321, 17, 91]
+
 
 # ==============================================================================
 # 4. DETECTION THRESHOLDS (PLACEHOLDER VALUES)

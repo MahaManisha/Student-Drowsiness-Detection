@@ -4,11 +4,15 @@ from detection.eye_landmarks import EyeLandmarkExtractor
 from detection.ear_calculator import EARCalculator
 from detection.eye_state_classifier import EyeState, EyeStateResult, EyeStateClassifier
 from detection.temporal_eye_analyzer import TemporalEyeAnalyzer, EyeTemporalRecord
+from detection.mouth_landmark_extractor import MouthLandmarkExtractor
+from detection.mar_calculator import MARCalculator
 
 __all__ = [
     "FaceMeshDetector",
     "EyeLandmarkExtractor",
+    "MouthLandmarkExtractor",
     "EARCalculator",
+    "MARCalculator",
     "EyeStateClassifier",
     "EyeState",
     "EyeStateResult",
