@@ -6,6 +6,7 @@ from detection.eye_state_classifier import EyeState, EyeStateResult, EyeStateCla
 from detection.temporal_eye_analyzer import TemporalEyeAnalyzer, EyeTemporalRecord
 from detection.mouth_landmark_extractor import MouthLandmarkExtractor
 from detection.mar_calculator import MARCalculator
+from detection.yawn_detector import YawnDetector, MouthState
 
 __all__ = [
     "FaceMeshDetector",
@@ -13,6 +14,8 @@ __all__ = [
     "MouthLandmarkExtractor",
     "EARCalculator",
     "MARCalculator",
+    "YawnDetector",
+    "MouthState",
     "EyeStateClassifier",
     "EyeState",
     "EyeStateResult",

@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
+from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -54,6 +54,7 @@ class StudentDrowsinessApp:
         # 4. Initialize EAR Calculator Module
         self.ear_calculator = EARCalculator()
         self.mar_calculator = MARCalculator()
+        self.yawn_detector = YawnDetector()
 
         # 5. Initialize Eye State Classifier Module
         self.classifier = EyeStateClassifier()
@@ -159,6 +160,7 @@ class StudentDrowsinessApp:
                     overall_state=overall_state,
                     avg_ear=avg_ear,
                 )
+                self.yawn_detector.update(mar_val)
 
                 # Step 4: Render UI status banner on frame
                 cv2.putText(
@@ -185,22 +187,29 @@ class StudentDrowsinessApp:
                 closed_frames = self.temporal_analyzer.get_closed_frame_count()
                 closed_time = self.temporal_analyzer.get_closed_duration_seconds()
 
-                # Get mouth metrics for display (Phase 7.5 & 8.4)
-                if inner_lip is not None:
-                    mouth_count = len(inner_lip)
-                    mouth_status = "ACTIVE"
-                    mouth_status_color = (0, 255, 0)      # Vivid Green
-                else:
-                    mouth_count = 0
-                    mouth_status = "SEARCHING"
-                    mouth_status_color = (0, 0, 255)      # Vivid Red
+                # Get mouth metrics for display (Phase 7.5, 8.4, & 9.5)
+                yawn_metrics = self.yawn_detector.get_yawn_metrics()
+                yawn_count = yawn_metrics["yawn_count"]
+                open_frames = yawn_metrics["consecutive_open_frames"]
+                open_duration = yawn_metrics["yawn_duration_seconds"]
 
-                mar_str = f"{mar_val:.3f}" if mar_val is not None else "N/A"
+                mouth_state_enum = self.yawn_detector.classify_mouth_state(mar_val)
+                mouth_state_str = mouth_state_enum.value
+
+                # Color-code mouth state (Vivid Green = CLOSED, Magenta = OPEN, Gray = UNKNOWN)
+                if mouth_state_enum == MouthState.OPEN:
+                    mouth_state_color = (255, 0, 255)  # Magenta
+                elif mouth_state_enum == MouthState.CLOSED:
+                    mouth_state_color = (0, 255, 0)    # Vivid Green
+                else:
+                    mouth_state_color = (130, 130, 130) # Neutral Gray
+
+                mar_str = f"{mar_val:.2f}" if mar_val is not None else "N/A"
 
                 # Draw a premium semi-transparent HUD background box for the metrics
                 hud_overlay = frame.copy()
-                # Draw dark gray rectangle on top-left area (expanded height for new mouth metrics and MAR)
-                cv2.rectangle(hud_overlay, (10, 80), (320, 430), (15, 15, 15), -1)
+                # Draw dark gray rectangle on top-left area (expanded height for yawn and mouth metrics)
+                cv2.rectangle(hud_overlay, (10, 80), (320, 460), (15, 15, 15), -1)
                 alpha = 0.7
                 cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
 
@@ -232,11 +241,15 @@ class StudentDrowsinessApp:
                 cv2.putText(frame, f"Closed Frames : {closed_frames}", (20, 285), font, scale, text_color, thickness, line_type)
                 cv2.putText(frame, f"Closed Time : {closed_time:.2f} s", (20, 315), font, scale, text_color, thickness, line_type)
 
-                # Render Phase 7.5 mouth metrics & Phase 8.4 MAR
-                cv2.putText(frame, f"Mouth Landmarks : {mouth_count}", (20, 345), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"MAR : {mar_str}", (20, 375), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, "Status : ", (20, 405), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, mouth_status, (95, 405), font, 0.6, mouth_status_color, 2, line_type)
+                # Render Phase 9.5 YawnDetector metrics (compact spacing)
+                cv2.putText(frame, f"MAR : {mar_str}", (20, 340), font, scale, text_color, thickness, line_type)
+                
+                cv2.putText(frame, "Mouth State : ", (20, 365), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, mouth_state_str, (135, 365), font, 0.6, mouth_state_color, 2, line_type)
+                
+                cv2.putText(frame, f"Yawn Count : {yawn_count}", (20, 390), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Open Frames : {open_frames}", (20, 415), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Open Time : {open_duration:.2f} s", (20, 440), font, scale, text_color, thickness, line_type)
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)
