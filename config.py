@@ -76,6 +76,10 @@ EAR_THRESHOLD = 0.25
 # Number of consecutive frames the eye must be below EAR_THRESHOLD to trigger drowsiness
 EAR_CONSECUTIVE_FRAMES = 20
 
+# Minimum and maximum consecutive frames for a valid blink (prevents threshold jitter)
+MIN_BLINK_DURATION_FRAMES = 2
+MAX_BLINK_DURATION_FRAMES = 15
+
 # Mouth Aspect Ratio (MAR) threshold above which a mouth is considered yawning
 MAR_THRESHOLD = 0.60
 

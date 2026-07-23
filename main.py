@@ -57,7 +57,11 @@ class StudentDrowsinessApp:
         self.classifier = EyeStateClassifier()
 
         # 6. Initialize Temporal Eye Analyzer Module
-        self.temporal_analyzer = TemporalEyeAnalyzer(fps=self.camera.fps_target)
+        self.temporal_analyzer = TemporalEyeAnalyzer(
+            fps=self.camera.fps_target,
+            min_blink_duration=getattr(config, "MIN_BLINK_DURATION_FRAMES", 2),
+            max_blink_duration=getattr(config, "MAX_BLINK_DURATION_FRAMES", 15),
+        )
 
         self.is_running: bool = False
 
@@ -153,16 +157,13 @@ class StudentDrowsinessApp:
                     cv2.LINE_AA,
                 )
 
-                # Step 5: Classify Eye State and Render Metrics Overlay (HUD Style)
-                # Classify state using the calculated average EAR
-                state_result = self.classifier.classify_average_ear(avg_ear)
-                
+                # Step 5: Render Metrics Overlay (HUD Style)
                 # Format string representations of EAR values
                 l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
                 r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
                 avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
-                thresh_val = state_result.threshold
-                state_str = state_result.state.value
+                thresh_val = self.classifier.get_threshold()
+                state_str = overall_state.value
 
                 # Get temporal metrics for display
                 blink_count = self.temporal_analyzer.get_blink_count()
@@ -190,9 +191,9 @@ class StudentDrowsinessApp:
                 cv2.putText(frame, f"Threshold : {thresh_val:.3f}", (20, 195), font, scale, text_color, thickness, line_type)
 
                 # Color-code the Eye State to make it immediately recognizable (Green = OPEN, Red = CLOSED, Gray = UNKNOWN)
-                if state_result.state == "OPEN":
+                if overall_state == EyeState.OPEN:
                     state_color = (0, 255, 0)      # Vivid Green
-                elif state_result.state == "CLOSED":
+                elif overall_state == EyeState.CLOSED:
                     state_color = (0, 0, 255)      # Vivid Red
                 else:
                     state_color = (130, 130, 130)  # Neutral Gray

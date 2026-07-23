@@ -269,7 +269,7 @@ class TemporalEyeAnalyzer:
         else:
             old_fps = self.fps
             self.fps = float(fps)
-            logger.info(f"Camera FPS updated dynamically: {old_fps} -> {self.fps}")
+            logger.debug(f"Camera FPS updated dynamically: {old_fps} -> {self.fps}")
 
     def get_consecutive_open_frames(self) -> int:
         """
