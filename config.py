@@ -84,6 +84,15 @@ MOUTH_INNER_LIP_INDICES = [78, 81, 13, 311, 308, 402, 14, 178]
 # - Vertical pairs: (37, 91), (0, 17), (267, 321)
 MOUTH_OUTER_LIP_INDICES = [61, 37, 0, 267, 291, 321, 17, 91]
 
+# 6-Point landmarks mapping for Head Pose Estimation (solvePnP):
+# - Nose tip: 4
+# - Chin: 152
+# - Left eye outer corner (subject's left): 263
+# - Right eye outer corner (subject's right): 33
+# - Left mouth corner (subject's left): 291
+# - Right mouth corner (subject's right): 61
+HEAD_POSE_LANDMARK_INDICES = [4, 152, 263, 33, 291, 61]
+
 
 # ==============================================================================
 # 4. DETECTION THRESHOLDS (PLACEHOLDER VALUES)

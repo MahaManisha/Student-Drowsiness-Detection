@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
+from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, HeadPoseEstimator, HeadPoseResult, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -55,6 +55,7 @@ class StudentDrowsinessApp:
         self.ear_calculator = EARCalculator()
         self.mar_calculator = MARCalculator()
         self.yawn_detector = YawnDetector()
+        self.head_pose_estimator = HeadPoseEstimator()
 
         # 5. Initialize Eye State Classifier Module
         self.classifier = EyeStateClassifier()
@@ -161,6 +162,10 @@ class StudentDrowsinessApp:
                     avg_ear=avg_ear,
                 )
                 self.yawn_detector.update(mar_val)
+                pose_result = self.head_pose_estimator.estimate_head_pose(
+                    all_landmarks[0] if (has_face and all_landmarks) else None,
+                    (frame.shape[0], frame.shape[1])
+                )
 
                 # Step 4: Render UI status banner on frame
                 cv2.putText(
@@ -206,10 +211,12 @@ class StudentDrowsinessApp:
 
                 mar_str = f"{mar_val:.2f}" if mar_val is not None else "N/A"
 
-                # Draw a premium semi-transparent HUD background box for the metrics
+                # Draw a premium semi-transparent HUD background boxes for the metrics
                 hud_overlay = frame.copy()
-                # Draw dark gray rectangle on top-left area (expanded height for yawn and mouth metrics)
+                # Draw left metrics box (expanded height for yawn and mouth metrics)
                 cv2.rectangle(hud_overlay, (10, 80), (320, 460), (15, 15, 15), -1)
+                # Draw right metrics box for head pose (symmetrical size)
+                cv2.rectangle(hud_overlay, (330, 80), (630, 215), (15, 15, 15), -1)
                 alpha = 0.7
                 cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
 
@@ -250,6 +257,31 @@ class StudentDrowsinessApp:
                 cv2.putText(frame, f"Yawn Count : {yawn_count}", (20, 390), font, scale, text_color, thickness, line_type)
                 cv2.putText(frame, f"Open Frames : {open_frames}", (20, 415), font, scale, text_color, thickness, line_type)
                 cv2.putText(frame, f"Open Time : {open_duration:.2f} s", (20, 440), font, scale, text_color, thickness, line_type)
+
+                # Render Phase 10.5 HeadPoseEstimator metrics (top-right box)
+                pitch_val = pose_result.pitch
+                yaw_val = pose_result.yaw
+                roll_val = pose_result.roll
+                
+                if pose_result.valid:
+                    pitch_str = f"{pitch_val:.1f}\u00b0"
+                    yaw_str = f"{yaw_val:.1f}\u00b0"
+                    roll_str = f"{roll_val:.1f}\u00b0"
+                    pose_status_str = "TRACKING"
+                    pose_status_color = (0, 255, 0)      # Vivid Green
+                else:
+                    pitch_str = "N/A"
+                    yaw_str = "N/A"
+                    roll_str = "N/A"
+                    pose_status_str = "SEARCHING"
+                    pose_status_color = (0, 0, 255)      # Vivid Red
+
+                cv2.putText(frame, f"Pitch : {pitch_str}", (340, 105), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Yaw : {yaw_str}", (340, 135), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Roll : {roll_str}", (340, 165), font, scale, text_color, thickness, line_type)
+                
+                cv2.putText(frame, "Status : ", (340, 195), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, pose_status_str, (415, 195), font, 0.6, pose_status_color, 2, line_type)
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)
