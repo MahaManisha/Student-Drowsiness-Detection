@@ -11,7 +11,7 @@ import cv2
 
 import config
 from camera import CameraStream
-from detection import FaceMeshDetector, EyeLandmarkExtractor, EARCalculator, EyeStateClassifier
+from detection import FaceMeshDetector, EyeLandmarkExtractor, EARCalculator, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
 from utils import get_logger
 
 # Initialize central logger for main application lifecycle
@@ -56,6 +56,9 @@ class StudentDrowsinessApp:
         # 5. Initialize Eye State Classifier Module
         self.classifier = EyeStateClassifier()
 
+        # 6. Initialize Temporal Eye Analyzer Module
+        self.temporal_analyzer = TemporalEyeAnalyzer(fps=self.camera.fps_target)
+
         self.is_running: bool = False
 
     def start(self) -> None:
@@ -87,6 +90,7 @@ class StudentDrowsinessApp:
                 has_face, all_landmarks = self.detector.detect_landmarks(frame)
 
                 right_ear, left_ear, avg_ear = None, None, None
+                right_state, left_state, overall_state = EyeState.UNKNOWN, EyeState.UNKNOWN, EyeState.UNKNOWN
 
                 # Step 3: Draw facial landmark mesh overlays, extract eye landmarks, and calculate EAR
                 if has_face and all_landmarks:
@@ -115,6 +119,11 @@ class StudentDrowsinessApp:
                     # Periodically log EAR metrics (every 30 frames)
                     self.ear_calculator.log_ear_periodically(right_ear, left_ear, avg_ear)
 
+                    # Classify eye states for temporal logging
+                    right_state, left_state, overall_state = self.classifier.classify_both_eyes(
+                        right_ear, left_ear
+                    )
+
                     num_landmarks = len(face_landmarks)
                     num_right = len(right_eye) if right_eye is not None else 0
                     num_left = len(left_eye) if left_eye is not None else 0
@@ -124,6 +133,13 @@ class StudentDrowsinessApp:
                     status_text = "Searching for Face..."
                     status_color = (0, 0, 255)
 
+                # Update the temporal analyzer on every frame
+                self.temporal_analyzer.update(
+                    right_state=right_state,
+                    left_state=left_state,
+                    overall_state=overall_state,
+                    avg_ear=avg_ear,
+                )
 
                 # Step 4: Render UI status banner on frame
                 cv2.putText(
@@ -148,10 +164,15 @@ class StudentDrowsinessApp:
                 thresh_val = state_result.threshold
                 state_str = state_result.state.value
 
+                # Get temporal metrics for display
+                blink_count = self.temporal_analyzer.get_blink_count()
+                closed_frames = self.temporal_analyzer.get_closed_frame_count()
+                closed_time = self.temporal_analyzer.get_closed_duration_seconds()
+
                 # Draw a premium semi-transparent HUD background box for the metrics
                 hud_overlay = frame.copy()
-                # Draw dark gray rectangle on top-left area
-                cv2.rectangle(hud_overlay, (10, 80), (320, 245), (15, 15, 15), -1)
+                # Draw dark gray rectangle on top-left area (expanded height for new metrics)
+                cv2.rectangle(hud_overlay, (10, 80), (320, 335), (15, 15, 15), -1)
                 alpha = 0.7
                 cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
 
@@ -177,6 +198,11 @@ class StudentDrowsinessApp:
                     state_color = (130, 130, 130)  # Neutral Gray
 
                 cv2.putText(frame, f"Eye State : {state_str}", (20, 225), font, 0.6, state_color, 2, line_type)
+
+                # Render Phase 6.5 temporal metrics
+                cv2.putText(frame, f"Blink Count : {blink_count}", (20, 255), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Closed Frames : {closed_frames}", (20, 285), font, scale, text_color, thickness, line_type)
+                cv2.putText(frame, f"Closed Time : {closed_time:.2f} s", (20, 315), font, scale, text_color, thickness, line_type)
 
                 # Step 5: Render FPS counter badge
                 frame = self.camera.draw_fps_overlay(frame)
