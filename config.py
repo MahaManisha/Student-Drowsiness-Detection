@@ -154,6 +154,9 @@ ALERT_DURATION_SECONDS = 3.0
 # Alarm volume level (0.0 to 1.0)
 ALARM_VOLUME = 0.8
 
+# Cooldown period (in seconds) to prevent repeated alerts in the same state
+ALERT_COOLDOWN_SECONDS = 5.0
+
 
 # ==============================================================================
 # 5. DASHBOARD & MONITORING SETTINGS

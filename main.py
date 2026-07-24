@@ -8,11 +8,24 @@ and extensible real-time frame processing loop.
 
 import sys
 import cv2
-
+import time
 import config
 from camera import CameraStream
 from detection import FaceMeshDetector, EyeLandmarkExtractor, MouthLandmarkExtractor, EARCalculator, MARCalculator, YawnDetector, MouthState, HeadPoseEstimator, HeadPoseResult, StudentDrowsinessDecisionEngine, DrowsinessState, EyeStateClassifier, TemporalEyeAnalyzer, EyeState
 from utils import get_logger
+from alerts.alert_manager import AlertManager, HUDAlertChannel, AudioAlertChannel
+from dashboard.hud import HUDVisualizer
+
+# Import SessionLogger using local path manipulation to avoid standard library conflicts (Phase 12.3)
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "logging")))
+try:
+    from session_logger import SessionLogger
+finally:
+    if sys.path[0] == os.path.abspath(os.path.join(os.path.dirname(__file__), "logging")):
+        sys.path.pop(0)
+
+from analytics.session_statistics import SessionStatisticsTracker
 
 # Initialize central logger for main application lifecycle
 logger = get_logger("MainApplication")
@@ -68,7 +81,25 @@ class StudentDrowsinessApp:
         )
         self.decision_engine = StudentDrowsinessDecisionEngine()
 
+        # 7. Initialize Alert System (Phase 12.2 Integration)
+        self.hud_channel = HUDAlertChannel()
+        self.audio_channel = AudioAlertChannel()
+        self.alert_manager = AlertManager(channels=[self.hud_channel, self.audio_channel])
+
+        # 8. Initialize HUD Visualizer (Phase 12.2)
+        self.visualizer = HUDVisualizer()
+
+        # 9. Initialize Session Logger (Phase 12.3)
+        self.session_logger = SessionLogger()
+
+        # 10. Initialize Session Statistics Tracker (Phase 12.4)
+        self.stats_tracker = SessionStatisticsTracker()
+
+        # Session tracking variables
+        self.start_time: float = 0.0
+
         self.is_running: bool = False
+
 
     def start(self) -> None:
         """
@@ -81,6 +112,7 @@ class StudentDrowsinessApp:
             sys.exit(1)
 
         self.is_running = True
+        self.start_time = time.time()
         logger.info("Application pipeline running. Press 'q' or 'ESC' on the video window to quit.")
 
         window_title = config.DASHBOARD_TITLE
@@ -186,170 +218,103 @@ class StudentDrowsinessApp:
                 }
                 decision_metrics = self.decision_engine.update(eye_payload, yawn_payload, pose_payload)
 
-                # Step 4: Render UI status banner on frame
-                cv2.putText(
-                    frame,
-                    status_text,
-                    (15, 65),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    status_color,
-                    2,
-                    cv2.LINE_AA,
+                # Process result in Alert Manager (Phase 12.2 Integration)
+                drowsiness_result = self.decision_engine.drowsiness_result
+                if drowsiness_result is not None:
+                    self.alert_manager.process_result(drowsiness_result)
+
+                # Update structured session logs (Phase 12.3)
+                score_val = decision_metrics.get("drowsiness_score", 0.0)
+                state_raw = decision_metrics.get("drowsiness_state", "ALERT")
+                confidence_pct = (decision_metrics.get("intermediate_decision") or {}).get("confidence_score", 0.0) * 100.0
+                self.session_logger.update(state_raw, score_val, confidence_pct)
+
+                # Update session statistics (Phase 12.4)
+                self.stats_tracker.update(
+                    current_state=state_raw,
+                    score=score_val,
+                    avg_ear=avg_ear,
+                    mar=mar_val,
+                    blink_count=self.temporal_analyzer.get_blink_count(),
+                    yawn_count=self.yawn_detector.get_yawn_count(),
+                    closed_duration=self.temporal_analyzer.get_closed_duration_seconds()
                 )
 
-                # Step 5: Render Metrics Overlay (HUD Style)
-                # Format string representations of EAR values
-                l_str = f"{left_ear:.3f}" if left_ear is not None else "N/A"
-                r_str = f"{right_ear:.3f}" if right_ear is not None else "N/A"
-                avg_str = f"{avg_ear:.3f}" if avg_ear is not None else "N/A"
+
+                # Query Alert Status
+                hud_active = self.hud_channel.current_message is not None
+                audio_active = (drowsiness_result.state == DrowsinessState.HIGHLY_DROWSY) if drowsiness_result else False
+
+                # Check config flags
+                hud_enabled = getattr(config, "VISUAL_ALERT_ENABLED", True)
+                audio_enabled = getattr(config, "AUDIO_ALERT_ENABLED", True)
+
+                alert_statuses = []
+                if hud_enabled:
+                    alert_statuses.append(f"HUD {'ACTIVE' if hud_active else 'READY'}")
+                else:
+                    alert_statuses.append("HUD DISABLED")
+
+                if audio_enabled:
+                    alert_statuses.append(f"AUDIO {'ACTIVE' if audio_active else 'READY'}")
+                else:
+                    alert_statuses.append("AUDIO DISABLED")
+
+                alert_status_str = " | ".join(alert_statuses)
+
+                # Format session duration
+                elapsed_seconds = int(time.time() - self.start_time)
+                hrs = elapsed_seconds // 3600
+                mins = (elapsed_seconds % 3600) // 60
+                secs = elapsed_seconds % 60
+                if hrs > 0:
+                    session_time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+                else:
+                    session_time_str = f"{mins:02d}:{secs:02d}"
+
+                # Extra descriptors for eye & mouth
                 thresh_val = self.classifier.get_threshold()
-                state_str = overall_state.value
-
-                # Get temporal metrics for display
-                blink_count = self.temporal_analyzer.get_blink_count()
-                closed_frames = self.temporal_analyzer.get_closed_frame_count()
-                closed_time = self.temporal_analyzer.get_closed_duration_seconds()
-
-                # Get mouth metrics for display (Phase 7.5, 8.4, & 9.5)
-                yawn_metrics = self.yawn_detector.get_yawn_metrics()
-                yawn_count = yawn_metrics["yawn_count"]
-                open_frames = yawn_metrics["consecutive_open_frames"]
-                open_duration = yawn_metrics["yawn_duration_seconds"]
-
                 mouth_state_enum = self.yawn_detector.classify_mouth_state(mar_val)
                 mouth_state_str = mouth_state_enum.value
 
-                # Color-code mouth state (Vivid Green = CLOSED, Magenta = OPEN, Gray = UNKNOWN)
-                if mouth_state_enum == MouthState.OPEN:
-                    mouth_state_color = (255, 0, 255)  # Magenta
-                elif mouth_state_enum == MouthState.CLOSED:
-                    mouth_state_color = (0, 255, 0)    # Vivid Green
-                else:
-                    mouth_state_color = (130, 130, 130) # Neutral Gray
+                # Assemble metrics payload for the independent visualizer
+                metrics_payload = {
+                    "session_time": session_time_str,
+                    "fps": self.camera.get_fps(),
+                    "drowsiness_state": decision_metrics.get("drowsiness_state", "ALERT"),
+                    "drowsiness_score": decision_metrics.get("drowsiness_score", 0.0),
+                    "confidence": (decision_metrics.get("intermediate_decision") or {}).get("confidence_score", 0.0) * 100.0,
+                    "cooccurrence": (decision_metrics.get("intermediate_decision") or {}).get("signal_cooccurrence_count", 0),
+                    "explanation": (decision_metrics.get("drowsiness_result") or {}).get("explanation", ""),
+                    "blink_count": self.temporal_analyzer.get_blink_count(),
+                    "closed_frames": self.temporal_analyzer.get_closed_frame_count(),
+                    "closed_time": self.temporal_analyzer.get_closed_duration_seconds(),
+                    "yawn_count": self.yawn_detector.get_yawn_count(),
+                    "open_time": self.yawn_detector.get_open_duration_seconds(),
+                    "ear_metrics": {
+                        "left_ear": left_ear,
+                        "right_ear": right_ear,
+                        "avg_ear": avg_ear,
+                        "threshold": thresh_val,
+                        "state": overall_state.value if hasattr(overall_state, "value") else str(overall_state)
+                    },
+                    "mar_metrics": {
+                        "mar": mar_val,
+                        "threshold": self.yawn_detector.mar_threshold if hasattr(self.yawn_detector, "mar_threshold") else 0.60,
+                        "state": mouth_state_str
+                    },
+                    "head_pose": {
+                        "yaw": pose_result.yaw,
+                        "pitch": pose_result.pitch,
+                        "roll": pose_result.roll,
+                        "valid": pose_result.valid
+                    },
+                    "recent_event": self.alert_manager.get_last_event(),
+                    "alert_status": alert_status_str
+                }
 
-                mar_str = f"{mar_val:.2f}" if mar_val is not None else "N/A"
-
-                # Draw a premium semi-transparent HUD background boxes for the metrics
-                hud_overlay = frame.copy()
-                # Draw left metrics box (expanded height for yawn and mouth metrics)
-                cv2.rectangle(hud_overlay, (10, 80), (320, 460), (15, 15, 15), -1)
-                # Draw right metrics box for head pose (symmetrical size)
-                cv2.rectangle(hud_overlay, (330, 80), (630, 215), (15, 15, 15), -1)
-                # Draw right metrics box for drowsiness decision engine (symmetrical size)
-                cv2.rectangle(hud_overlay, (330, 230), (630, 390), (15, 15, 15), -1)
-                alpha = 0.7
-                cv2.addWeighted(hud_overlay, alpha, frame, 1.0 - alpha, 0, frame)
-
-                # Set up typography styling
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                scale = 0.55
-                text_color = (245, 245, 245)  # Soft white
-                thickness = 2
-                line_type = cv2.LINE_AA
-
-                # Draw the individual EAR values and Threshold inside the HUD box
-                cv2.putText(frame, f"Left EAR : {l_str}", (20, 105), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Right EAR : {r_str}", (20, 135), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Average EAR : {avg_str}", (20, 165), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Threshold : {thresh_val:.3f}", (20, 195), font, scale, text_color, thickness, line_type)
-
-                # Color-code the Eye State to make it immediately recognizable (Green = OPEN, Red = CLOSED, Gray = UNKNOWN)
-                if overall_state == EyeState.OPEN:
-                    state_color = (0, 255, 0)      # Vivid Green
-                elif overall_state == EyeState.CLOSED:
-                    state_color = (0, 0, 255)      # Vivid Red
-                else:
-                    state_color = (130, 130, 130)  # Neutral Gray
-
-                cv2.putText(frame, f"Eye State : {state_str}", (20, 225), font, 0.6, state_color, 2, line_type)
-
-                # Render Phase 6.5 temporal metrics
-                cv2.putText(frame, f"Blink Count : {blink_count}", (20, 255), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Closed Frames : {closed_frames}", (20, 285), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Closed Time : {closed_time:.2f} s", (20, 315), font, scale, text_color, thickness, line_type)
-
-                # Render Phase 9.5 YawnDetector metrics (compact spacing)
-                cv2.putText(frame, f"MAR : {mar_str}", (20, 340), font, scale, text_color, thickness, line_type)
-                
-                cv2.putText(frame, "Mouth State : ", (20, 365), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, mouth_state_str, (135, 365), font, 0.6, mouth_state_color, 2, line_type)
-                
-                cv2.putText(frame, f"Yawn Count : {yawn_count}", (20, 390), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Open Frames : {open_frames}", (20, 415), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Open Time : {open_duration:.2f} s", (20, 440), font, scale, text_color, thickness, line_type)
-
-                # Render Phase 10.5 HeadPoseEstimator metrics (top-right box)
-                pitch_val = pose_result.pitch
-                yaw_val = pose_result.yaw
-                roll_val = pose_result.roll
-                
-                if pose_result.valid:
-                    pitch_val_str = f"{pitch_val:.1f}"
-                    yaw_val_str = f"{yaw_val:.1f}"
-                    roll_val_str = f"{roll_val:.1f}"
-                    
-                    p_text = f"Pitch : {pitch_val_str}"
-                    (pw, ph), _ = cv2.getTextSize(p_text, font, scale, thickness)
-                    cv2.putText(frame, p_text, (340, 105), font, scale, text_color, thickness, line_type)
-                    cv2.circle(frame, (340 + pw + 3, 105 - ph + 2), 2, text_color, 1)
-
-                    y_text = f"Yaw : {yaw_val_str}"
-                    (yw, yh), _ = cv2.getTextSize(y_text, font, scale, thickness)
-                    cv2.putText(frame, y_text, (340, 135), font, scale, text_color, thickness, line_type)
-                    cv2.circle(frame, (340 + yw + 3, 135 - yh + 2), 2, text_color, 1)
-
-                    r_text = f"Roll : {roll_val_str}"
-                    (rw, rh), _ = cv2.getTextSize(r_text, font, scale, thickness)
-                    cv2.putText(frame, r_text, (340, 165), font, scale, text_color, thickness, line_type)
-                    cv2.circle(frame, (340 + rw + 3, 165 - rh + 2), 2, text_color, 1)
-                    
-                    pose_status_str = "TRACKING"
-                    pose_status_color = (0, 255, 0)      # Vivid Green
-                else:
-                    cv2.putText(frame, "Pitch : N/A", (340, 105), font, scale, text_color, thickness, line_type)
-                    cv2.putText(frame, "Yaw : N/A", (340, 135), font, scale, text_color, thickness, line_type)
-                    cv2.putText(frame, "Roll : N/A", (340, 165), font, scale, text_color, thickness, line_type)
-                    pose_status_str = "SEARCHING"
-                    pose_status_color = (0, 0, 255)      # Vivid Red
-                
-                cv2.putText(frame, "Status : ", (340, 195), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, pose_status_str, (415, 195), font, 0.6, pose_status_color, 2, line_type)
-
-                # Render Phase 11.5 DrowsinessDecisionEngine metrics (bottom-right box)
-                score_val = decision_metrics["drowsiness_score"]
-                state_raw = decision_metrics["drowsiness_state"]
-                state_str = state_raw.replace("_", " ")
-
-                # Color-code drowsiness state
-                if state_raw == "ALERT":
-                    state_color = (0, 255, 0)         # Vivid Green
-                elif state_raw == "SLIGHTLY_DROWSY":
-                    state_color = (0, 255, 255)       # Vivid Yellow
-                elif state_raw == "DROWSY":
-                    state_color = (0, 165, 255)       # Orange
-                else:  # HIGHLY_DROWSY
-                    state_color = (0, 0, 255)         # Vivid Red
-
-                # Extract intermediate decision parameters for confidence indicator
-                inter_dec = decision_metrics.get("intermediate_decision")
-                if inter_dec is not None:
-                    confidence_pct = inter_dec.get("confidence_score", 0.0) * 100.0
-                    cooccurrence = inter_dec.get("signal_cooccurrence_count", 0)
-                else:
-                    confidence_pct = 0.0
-                    cooccurrence = 0
-
-                cv2.putText(frame, f"Score : {score_val:.0f}", (340, 255), font, scale, text_color, thickness, line_type)
-                
-                cv2.putText(frame, "State : ", (340, 285), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, state_str, (405, 285), font, 0.6, state_color, 2, line_type)
-                
-                cv2.putText(frame, f"Confidence : {confidence_pct:.0f}%", (340, 315), font, scale, text_color, thickness, line_type)
-                cv2.putText(frame, f"Co-occurrence : {cooccurrence} / 3", (340, 345), font, scale, text_color, thickness, line_type)
-
-                # Step 5: Render FPS counter badge
-                frame = self.camera.draw_fps_overlay(frame)
+                # Step 4: Render new dashboard layout (Phase 12.2)
+                frame = self.visualizer.draw(frame, metrics_payload)
 
                 # Step 6: Render video preview window
                 cv2.imshow(window_title, frame)
@@ -373,6 +338,22 @@ class StudentDrowsinessApp:
         """
         logger.info("Stopping application and releasing resources...")
         self.is_running = False
+
+        # Save session statistics to reports directory (Phase 12.4)
+        if hasattr(self, "stats_tracker") and self.stats_tracker:
+            self.stats_tracker.save_stats(config.REPORTS_DIR / "session_statistics.json")
+
+        # Generate session summary report (Phase 12.5)
+        if hasattr(self, "stats_tracker") and self.stats_tracker and hasattr(self, "session_logger") and self.session_logger:
+            try:
+                from reports.report_generator import ReportGenerator
+                generator = ReportGenerator(
+                    stats_payload=self.stats_tracker.get_stats(),
+                    event_log_path=str(self.session_logger.log_path)
+                )
+                generator.generate_report(config.REPORTS_DIR / "session_summary_report.md")
+            except Exception as e:
+                logger.error(f"Failed to generate session summary report: {e}", exc_info=True)
 
         if hasattr(self, "detector") and self.detector:
             self.detector.close()
