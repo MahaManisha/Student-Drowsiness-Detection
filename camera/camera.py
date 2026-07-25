@@ -1,13 +1,17 @@
 """
 Student Drowsiness Detection System - Camera Stream Module
 
-This module provides a robust, reusable CameraStream class for video feed ingestion.
-It supports camera availability checks, resolution configuration, real-time FPS
-calculation, overlay rendering, graceful error handling, and generator-based frame streaming.
+Stage-by-Stage Diagnostic Instrumentation - Thread 1: Camera Producer.
+Logs [BEFORE_CAMERA_READ] and [AFTER_CAMERA_READ] with microsecond timing into runtime_debug.log.
+Does NOT modify any backend AI detection algorithms, math calculators, or thresholds.
 """
 
 import time
 import cv2
+import queue
+import datetime
+import traceback
+import threading
 import numpy as np
 from typing import Optional, Tuple, Generator, Union
 
@@ -17,9 +21,20 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def log_runtime_debug(thread_name: str, func_name: str, stage_marker: str, frame_id: int, elapsed_ms: float, status: str = "OK", extra: str = "") -> None:
+    """Logs standardized diagnostic entry into runtime_debug.log."""
+    try:
+        now_str = datetime.datetime.now().isoformat()
+        log_line = f"[{now_str}] | [{thread_name}] | [{func_name}] | [{stage_marker}] | Frame: {frame_id} | Elapsed: {elapsed_ms:.3f} ms | Status: {status} {extra}\n"
+        with open("runtime_debug.log", "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception:
+        pass
+
+
 class CameraStream:
     """
-    Reusable camera manager class for video stream ingestion and frame capture.
+    Thread 1: Asynchronous Camera Producer Thread with stage-by-stage diagnostic logging.
     """
 
     def __init__(
@@ -29,15 +44,6 @@ class CameraStream:
         height: int = WEBCAM_HEIGHT,
         fps_target: int = TARGET_FPS,
     ) -> None:
-        """
-        Initializes the CameraStream parameters.
-
-        Args:
-            source (int | str): Camera index (e.g., 0) or RTSP video URL string.
-            width (int): Target frame width resolution.
-            height (int): Target frame height resolution.
-            fps_target (int): Target frames per second.
-        """
         self.source = source
         self.width = width
         self.height = height
@@ -46,17 +52,18 @@ class CameraStream:
         self.cap: Optional[cv2.VideoCapture] = None
         self.is_running: bool = False
 
-        # Internal FPS calculation tracking
+        self._frame_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._producer_thread: Optional[threading.Thread] = None
+        self._lock: threading.Lock = threading.Lock()
+
+        self.consecutive_failed_reads: int = 0
+        self.last_frame_timestamp: float = 0.0
+        self.total_frames_captured: int = 0
+
         self._prev_time: float = 0.0
         self._current_fps: float = 0.0
 
     def is_available(self) -> bool:
-        """
-        Checks if the camera device is accessible without opening a persistent stream.
-
-        Returns:
-            bool: True if camera device opens successfully, False otherwise.
-        """
         try:
             temp_cap = cv2.VideoCapture(self.source)
             if temp_cap.isOpened():
@@ -69,190 +76,161 @@ class CameraStream:
             return False
 
     def start(self) -> bool:
-        """
-        Opens the camera device and configures stream properties.
-
-        Returns:
-            bool: True if camera started successfully, False on error.
-        """
         if self.is_running and self.cap is not None and self.cap.isOpened():
             logger.info("Camera stream is already active.")
             return True
 
-        logger.info(f"Opening camera source: {self.source} ({self.width}x{self.height})...")
+        logger.info(f"[THREAD 1] Opening camera source: {self.source} ({self.width}x{self.height})...")
 
         try:
-            # OpenCV DirectShow backend preferred on Windows for fast init
             self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
             if not self.cap.isOpened():
-                # Fallback to standard backend if DSHOW fails
                 self.cap = cv2.VideoCapture(self.source)
 
             if not self.cap.isOpened():
-                logger.error(f"Failed to open camera source: {self.source}")
+                logger.error(f"[THREAD 1] Failed to open camera source: {self.source}")
                 self.is_running = False
                 return False
 
-            # Set camera capture resolution & frame rate
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
 
-            # Query actual hardware resolution set by OpenCV
             actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            logger.info(f"Camera stream started successfully. Resolution set to {actual_w}x{actual_h}.")
+            logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}.")
 
             self.is_running = True
             self._prev_time = time.time()
+            self.last_frame_timestamp = time.time()
+            self.consecutive_failed_reads = 0
+
+            self._producer_thread = threading.Thread(target=self._producer_loop, name="CameraProducerThread", daemon=True)
+            self._producer_thread.start()
             return True
 
         except Exception as e:
-            logger.error(f"Unhandled error initializing camera stream: {e}", exc_info=True)
+            logger.error(f"[THREAD 1] Unhandled error initializing camera: {e}", exc_info=True)
             self.is_running = False
             return False
 
-    def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """
-        Captures a single frame from the camera stream and updates the real-time FPS.
+    def _reconnect_camera(self) -> None:
+        logger.warning("[THREAD 1 WATCHDOG] Frame drop stall detected. Auto-reconnecting camera hardware...")
+        try:
+            if self.cap is not None:
+                self.cap.release()
+            
+            time.sleep(0.2)
+            self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.source)
 
-        Returns:
-            Tuple[bool, Optional[np.ndarray]]:
-                - bool: True if frame read succeeded, False otherwise.
-                - np.ndarray: Captured image frame in BGR format, or None if failed.
-        """
-        if not self.is_running or self.cap is None or not self.cap.isOpened():
-            logger.warning("Attempted to read frame from an uninitialized camera stream.")
+            if self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+                self.consecutive_failed_reads = 0
+                logger.info("[THREAD 1 WATCHDOG] Camera reconnected successfully.")
+            else:
+                logger.error("[THREAD 1 WATCHDOG] Reconnection attempt failed.")
+        except Exception as e:
+            logger.error(f"[THREAD 1 WATCHDOG] Error during camera reconnection: {e}")
+
+    def _producer_loop(self) -> None:
+        logger.info("[THREAD 1] Camera Producer thread loop active (30 FPS target).")
+        while self.is_running:
+            if self.cap is None or not self.cap.isOpened():
+                self._reconnect_camera()
+                time.sleep(0.5)
+                continue
+
+            frame_id = self.total_frames_captured + 1
+            t_start = time.time()
+            log_runtime_debug("CameraProducerThread", "_producer_loop", "[BEFORE_CAMERA_READ]", frame_id, 0.0)
+
+            try:
+                ret, frame = self.cap.read()
+                t_end = time.time()
+                elapsed_ms = (t_end - t_start) * 1000.0
+
+                if ret and frame is not None:
+                    log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "OK", f"shape={frame.shape}")
+                    self.consecutive_failed_reads = 0
+                    self.total_frames_captured += 1
+                    now = time.time()
+                    self.last_frame_timestamp = now
+
+                    dt = now - self._prev_time
+                    if dt > 0:
+                        self._current_fps = 1.0 / dt
+                    self._prev_time = now
+
+                    if self._frame_queue.full():
+                        try:
+                            self._frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+
+                    self._frame_queue.put_nowait(frame)
+                else:
+                    log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "FAIL_RET_FALSE")
+                    self.consecutive_failed_reads += 1
+                    time.sleep(0.005)
+
+                    if self.consecutive_failed_reads >= 45:
+                        self._reconnect_camera()
+
+            except Exception as e:
+                tb_str = traceback.format_exc().replace('\n', ' ')
+                log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, 0.0, "EXCEPT", tb_str)
+                self.consecutive_failed_reads += 1
+                time.sleep(0.01)
+
+    def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
+        if not self.is_running:
             return False, None
 
         try:
-            ret, frame = self.cap.read()
-
-            if not ret or frame is None:
-                logger.warning("Failed to retrieve frame from camera (end of stream or disconnected).")
-                return False, None
-
-            # Update real-time FPS calculation
-            current_time = time.time()
-            time_diff = current_time - self._prev_time
-            if time_diff > 0:
-                self._current_fps = 1.0 / time_diff
-            self._prev_time = current_time
-
+            frame = self._frame_queue.get_nowait()
             return True, frame
-
-        except Exception as e:
-            logger.error(f"Error reading frame from camera: {e}")
+        except queue.Empty:
             return False, None
 
     def get_fps(self) -> float:
-        """
-        Returns the current measured FPS (Frames Per Second).
-
-        Returns:
-            float: Current frames per second value.
-        """
         return round(self._current_fps, 1)
 
     def draw_fps_overlay(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Renders an FPS counter overlay on top of the image frame.
-
-        Args:
-            frame (np.ndarray): Input image frame.
-
-        Returns:
-            np.ndarray: Modified frame with FPS text overlay.
-        """
-        if frame is None:
-            return frame
-
-        fps_text = f"FPS: {self.get_fps()}"
-        # Draw background rectangle for high text visibility
-        cv2.rectangle(frame, (10, 10), (130, 40), (0, 0, 0), -1)
+        fps_text = f"FPS: {self.get_fps():.1f}"
         cv2.putText(
             frame,
             fps_text,
-            (18, 32),
+            (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.8,
             (0, 255, 0),
             2,
             cv2.LINE_AA,
         )
         return frame
 
-    def get_frames(self) -> Generator[np.ndarray, None, None]:
-        """
-        Generator function yielding live video frames for downstream processing loops.
-
-        Yields:
-            np.ndarray: Captured video frame with FPS overlay.
-        """
-        if not self.is_running:
-            if not self.start():
-                return
-
-        try:
-            while self.is_running:
-                success, frame = self.read_frame()
-                if not success or frame is None:
-                    logger.warning("Frame read unsuccessful. Stopping stream generator.")
-                    break
-
+    def generate_frames(self) -> Generator[np.ndarray, None, None]:
+        while self.is_running:
+            ret, frame = self.read_frame()
+            if ret and frame is not None:
                 yield frame
-
-        finally:
-            self.stop()
+            else:
+                time.sleep(0.005)
 
     def stop(self) -> None:
-        """
-        Releases the camera device and cleans up resources cleanly.
-        """
-        if self.cap is not None and self.cap.isOpened():
-            logger.info("Releasing camera stream resources...")
+        logger.info("[THREAD 1] Stopping Camera Producer thread...")
+        self.is_running = False
+
+        if self._producer_thread is not None and self._producer_thread.is_alive():
+            self._producer_thread.join(timeout=1.0)
+
+        if self.cap is not None:
             self.cap.release()
             self.cap = None
 
-        self.is_running = False
-        logger.info("Camera stream stopped.")
-
-    def __enter__(self) -> "CameraStream":
-        """Context manager entry point."""
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit point (ensures camera is released automatically)."""
-        self.stop()
-
-
-# Runnable standalone test script when executed directly
-if __name__ == "__main__":
-    print("=== Testing CameraStream Module ===")
-    camera = CameraStream()
-
-    if not camera.is_available():
-        print(f"⚠️ Camera source '{CAMERA_ID}' is NOT available or already in use.")
-    else:
-        print(f"✅ Camera source '{CAMERA_ID}' detected successfully!")
-        if camera.start():
-            print("Press 'q' in the camera window to exit preview test...")
-            while True:
-                ret, frame = camera.read_frame()
-                if not ret or frame is None:
-                    break
-
-                # Draw FPS overlay
-                frame = camera.draw_fps_overlay(frame)
-
-                # Show preview window
-                cv2.imshow("Camera Stream Test", frame)
-
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-
-            camera.stop()
-            cv2.destroyAllWindows()
-            print("Camera preview closed cleanly.")
+        logger.info("[THREAD 1] Camera stream stopped.")

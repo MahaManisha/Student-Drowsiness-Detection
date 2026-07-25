@@ -12,8 +12,12 @@ scipy>=1.10.0
 pandas>=2.0.0
 matplotlib>=3.7.0
 
-# Real-Time Monitoring Dashboard
+# Real-Time Monitoring Dashboard (Streamlit Stack)
 streamlit>=1.28.0
+plotly>=5.18.0
+streamlit-option-menu>=0.3.6
+streamlit-extras>=0.3.5
+Pillow>=10.0.0
 
 # Audio Alarm System (Cross-Platform Audio Playback)
 pygame>=2.5.0
