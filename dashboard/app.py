@@ -1,11 +1,11 @@
 """
 Student Drowsiness Detection System - Main Streamlit Dashboard Entry Point
 
-Authoritative Singleton Session Lifecycle Manager Integration.
-Retrieves persistent DashboardCameraManager via get_singleton_camera_manager().
-Guarantees exactly ONE CameraProducerThread, ONE AIWorkerThread, ONE VideoCapture,
-and ONE MediaPipe FaceMesh instance across all reruns and page navigations.
-Does NOT modify any backend AI detection algorithms, math calculators, or thresholds.
+Decoupled Multi-Rate Fragment Refresh Architecture:
+- Camera Viewport Fragment: 30 FPS (0.033s) isolated st.image video stream
+- Telemetry Cards Fragment: 10 FPS (0.100s) numerical & status indicator cards
+- Plotly Charts & Decision Panel Fragment: 1 FPS (1.0s) Plotly SVG reticle & gauges
+- Session Statistics Fragment: 1 FPS (1.0s) bottom historical analytics
 """
 
 import os
@@ -45,21 +45,9 @@ from dashboard.components.bottom_analytics import render_bottom_analytics
 from dashboard.components.analytics_dashboard import render_analytics_dashboard
 from dashboard.components.lifecycle import (
     get_singleton_camera_manager,
-    get_singleton_object_ids,
     print_singleton_health_log,
 )
 from dashboard.utils.mock_data import MockTelemetryProvider
-
-
-def log_frame_profile(thread_name: str, func_name: str, stage_marker: str, frame_id: int, elapsed_ms: float, status: str = "OK", extra: str = "") -> None:
-    """Logs standardized diagnostic entry into frame_profile.log."""
-    try:
-        now_str = datetime.datetime.now().isoformat()
-        log_line = f"[{now_str}] | [{thread_name}] | [{func_name}] | [{stage_marker}] | Frame: {frame_id} | Elapsed: {elapsed_ms:.3f} ms | Status: {status} {extra}\n"
-        with open("frame_profile.log", "a", encoding="utf-8") as f:
-            f.write(log_line)
-    except Exception:
-        pass
 
 
 def load_css(css_file_path: str) -> None:
@@ -67,6 +55,119 @@ def load_css(css_file_path: str) -> None:
     if os.path.exists(css_file_path):
         with open(css_file_path, "r", encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+@st.fragment(run_every="0.033s")
+def render_camera_viewport(camera_mgr) -> None:
+    """
+    Stage 1: Camera Viewport Fragment (≈30 FPS / 0.033s).
+    Renders ONLY live video viewport. Never waits for Plotly or analytics rendering.
+    """
+    success, rgb_frame, telemetry = camera_mgr.get_processed_frame()
+    if success and (rgb_frame is not None or telemetry.get("jpeg_bytes") is not None):
+        img_payload = telemetry.get("jpeg_bytes") if telemetry.get("jpeg_bytes") is not None else rgb_frame
+        try:
+            st.image(img_payload, use_container_width=True)
+        except Exception:
+            pass
+    else:
+        error_msg = camera_mgr.last_error or "Camera device is offline or busy."
+        st.error(f"⚠️ {error_msg}")
+
+
+@st.fragment(run_every="0.100s")
+def render_telemetry_cards(camera_mgr) -> None:
+    """
+    Stage 2: Telemetry Cards Fragment (10 FPS / 0.100s).
+    Renders numerical stat cards: EAR, MAR, Blinks, Yawns, Eye & Mouth State Badges.
+    """
+    _, _, telemetry = camera_mgr.get_processed_frame()
+    render_telemetry_panel(telemetry)
+
+
+@st.fragment(run_every="1.0s")
+def render_charts_and_decision(camera_mgr) -> None:
+    """
+    Stage 3: Plotly Charts & Decision Panel Fragment (1 FPS / 1.0s).
+    Renders Plotly 3D reticle compass, circular drowsiness gauge, and XAI matrix.
+    """
+    _, _, telemetry = camera_mgr.get_processed_frame()
+    render_head_pose_panel(telemetry)
+    render_decision_panel(telemetry)
+
+
+@st.fragment(run_every="1.0s")
+def render_session_analytics(camera_mgr) -> None:
+    """
+    Stage 4: Session Statistics & Historical Analytics Fragment (1 FPS / 1.0s).
+    Renders bottom session stats and long-term trend line charts.
+    """
+    _, _, telemetry = camera_mgr.get_processed_frame()
+
+    if "telemetry_history" not in st.session_state:
+        st.session_state.telemetry_history = []
+
+    now_str = time.strftime("%H:%M:%S", time.localtime())
+    st.session_state.telemetry_history.append({
+        "timestamp": now_str,
+        "ear": telemetry.get("avg_ear", 0.285) if telemetry.get("avg_ear") is not None else 0.0,
+        "mar": telemetry.get("mar", 0.180) if telemetry.get("mar") is not None else 0.0,
+        "score": telemetry.get("drowsiness_score", 0.0),
+        "blinks": telemetry.get("blink_count", 0),
+        "yawns": telemetry.get("yawn_count", 0),
+        "state": telemetry.get("drowsiness_state", "ALERT")
+    })
+    if len(st.session_state.telemetry_history) > 150:
+        st.session_state.telemetry_history = st.session_state.telemetry_history[-150:]
+
+    history_df = pd.DataFrame(st.session_state.telemetry_history)
+
+    render_bottom_analytics(telemetry, camera_connected=telemetry.get("has_face", True))
+    render_analytics_dashboard(telemetry, history_df, force_chart_update=True)
+
+
+def render_live_dashboard(camera_mgr) -> None:
+    """
+    Assembles multi-rate decoupled dashboard layout.
+    """
+    _, _, telemetry = camera_mgr.get_processed_frame()
+
+    # Render Header (Outer Page)
+    render_header(telemetry)
+
+    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
+
+    with col_center:
+        st.markdown('<div class="dash-card">', unsafe_allow_html=True)
+        render_camera_panel_header(
+            is_live=True,
+            has_face=telemetry.get("has_face", True),
+            state_str=telemetry.get("drowsiness_state", "ALERT")
+        )
+
+        # Isolated Container 1: 30 FPS Camera Feed
+        viewport_container = st.container()
+        with viewport_container:
+            render_camera_viewport(camera_mgr)
+
+        render_camera_panel_footer(fps=telemetry.get("fps", 30.0), resolution="1280x720")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_right:
+        # Isolated Container 2: 10 FPS Telemetry Cards
+        telemetry_container = st.container()
+        with telemetry_container:
+            render_telemetry_cards(camera_mgr)
+
+        # Isolated Container 3: 1 FPS Plotly Charts & Decision Panel
+        charts_container = st.container()
+        with charts_container:
+            render_charts_and_decision(camera_mgr)
+
+    # Isolated Container 4: 1 FPS Bottom Analytics & Session Stats
+    analytics_container = st.container()
+    with analytics_container:
+        render_session_analytics(camera_mgr)
 
 
 def main() -> None:
@@ -88,99 +189,8 @@ def main() -> None:
     # Retrieve Singleton Camera Manager Instance
     camera_mgr = get_singleton_camera_manager()
 
-    if "telemetry_history" not in st.session_state:
-        st.session_state.telemetry_history = []
-
-    if "frame_counter" not in st.session_state:
-        st.session_state.frame_counter = 0
-
-    st.session_state.frame_counter += 1
-    frame_id = st.session_state.frame_counter
-
-    # Log Singleton Health & Object IDs every 30 frames
-    if frame_id % 30 == 1:
-        print_singleton_health_log()
-
-    success, rgb_frame, telemetry = camera_mgr.get_processed_frame()
-
-    if not success or rgb_frame is None:
-        if "mock_provider" not in st.session_state:
-            st.session_state.mock_provider = MockTelemetryProvider()
-        fallback_telemetry = st.session_state.mock_provider.get_telemetry()
-        telemetry.update(fallback_telemetry)
-
-    # Telemetry Update Diagnostic Stage
-    t_tel_start = time.time()
-    log_frame_profile("StreamlitRenderer", "main", "[BEFORE_TELEMETRY_UPDATE]", frame_id, 0.0)
-
-    now_str = time.strftime("%H:%M:%S", time.localtime())
-    st.session_state.telemetry_history.append({
-        "timestamp": now_str,
-        "ear": telemetry.get("avg_ear", 0.285) if telemetry.get("avg_ear") is not None else 0.0,
-        "mar": telemetry.get("mar", 0.180) if telemetry.get("mar") is not None else 0.0,
-        "score": telemetry.get("drowsiness_score", 0.0),
-        "blinks": telemetry.get("blink_count", 0),
-        "yawns": telemetry.get("yawn_count", 0),
-        "state": telemetry.get("drowsiness_state", "ALERT")
-    })
-    if len(st.session_state.telemetry_history) > 150:
-        st.session_state.telemetry_history = st.session_state.telemetry_history[-150:]
-
-    history_df = pd.DataFrame(st.session_state.telemetry_history)
-
-    t_tel_end = time.time()
-    log_frame_profile("StreamlitRenderer", "main", "[AFTER_TELEMETRY_UPDATE]", frame_id, (t_tel_end - t_tel_start) * 1000.0, "OK")
-
-    # Render Header
-    render_header(telemetry)
-
-    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
-
-    with col_center:
-        st.markdown('<div class="dash-card">', unsafe_allow_html=True)
-        render_camera_panel_header(
-            is_live=success,
-            has_face=telemetry.get("has_face", True),
-            state_str=telemetry.get("drowsiness_state", "ALERT")
-        )
-
-        if success and rgb_frame is not None:
-            t_img_start = time.time()
-            log_frame_profile("StreamlitRenderer", "main", "[BEFORE_STREAMLIT_IMAGE]", frame_id, 0.0)
-
-            try:
-                st.image(rgb_frame, use_container_width=True)
-                t_img_end = time.time()
-                log_frame_profile("StreamlitRenderer", "main", "[AFTER_STREAMLIT_IMAGE]", frame_id, (t_img_end - t_img_start) * 1000.0, "OK")
-            except Exception as e:
-                tb_str = traceback.format_exc().replace('\n', ' ')
-                log_frame_profile("StreamlitRenderer", "main", "[AFTER_STREAMLIT_IMAGE]", frame_id, 0.0, "EXCEPT", tb_str)
-
-            render_camera_panel_footer(fps=telemetry.get("fps", 30.0), resolution="1280x720")
-        else:
-            error_msg = camera_mgr.last_error or "Camera device is offline or busy."
-            retry_clicked = render_camera_error_state(error_msg)
-            if retry_clicked:
-                camera_mgr.start()
-                st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_right:
-        render_telemetry_panel(telemetry)
-        render_head_pose_panel(telemetry)
-        render_decision_panel(telemetry)
-
-    render_bottom_analytics(telemetry, camera_connected=success)
-
-    force_charts = (st.session_state.frame_counter % 45 == 0) or (st.session_state.frame_counter < 3)
-    render_analytics_dashboard(telemetry, history_df, force_chart_update=force_charts)
-
-    log_frame_profile("StreamlitRenderer", "main", "[END_OF_FRAME]", frame_id, 0.0, "OK")
-
-    if success and rgb_frame is not None:
-        time.sleep(0.01)
-        st.rerun()
+    # Render Multi-Rate Decoupled Live Dashboard
+    render_live_dashboard(camera_mgr)
 
 
 if __name__ == "__main__":

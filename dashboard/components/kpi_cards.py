@@ -29,7 +29,14 @@ def render_kpi_cards(raw_telemetry: Dict[str, Any]) -> None:
     max_closure = raw_telemetry.get("eye_closed_duration") if raw_telemetry.get("eye_closed_duration") is not None else stats.get("longest_eye_closure")
     
     events = raw_telemetry.get("events", []) if raw_telemetry else []
-    alert_count = sum(1 for e in events if e.get("type") in ["ALERT", "DROWSY", "CRITICAL"])
+    alert_count = 0
+    for e in events:
+        if isinstance(e, dict):
+            if e.get("type") in ["ALERT", "DROWSY", "CRITICAL"]:
+                alert_count += 1
+        elif isinstance(e, str):
+            if any(kw in e.upper() for kw in ["ALERT", "DROWSY", "CRITICAL"]):
+                alert_count += 1
 
     # Format Strings
     blinks_str = safe_int(blinks, default="0")

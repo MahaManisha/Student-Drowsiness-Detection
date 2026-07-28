@@ -307,7 +307,9 @@ class StudentDrowsinessApp:
                         "yaw": pose_result.yaw,
                         "pitch": pose_result.pitch,
                         "roll": pose_result.roll,
-                        "valid": pose_result.valid
+                        "valid": pose_result.valid,
+                        "rvec": pose_result.rvec,
+                        "tvec": pose_result.tvec
                     },
                     "recent_event": self.alert_manager.get_last_event(),
                     "alert_status": alert_status_str

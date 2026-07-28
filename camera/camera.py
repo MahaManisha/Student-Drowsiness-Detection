@@ -69,6 +69,7 @@ class CameraStream:
             if temp_cap.isOpened():
                 ret, _ = temp_cap.read()
                 temp_cap.release()
+                time.sleep(0.1)
                 return ret
             return False
         except Exception as e:
@@ -86,6 +87,8 @@ class CameraStream:
             self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
             if not self.cap.isOpened():
+                if self.cap is not None:
+                    self.cap.release()
                 self.cap = cv2.VideoCapture(self.source)
 
             if not self.cap.isOpened():
@@ -96,10 +99,11 @@ class CameraStream:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}.")
+            logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}. CAP_PROP_BUFFERSIZE=1.")
 
             self.is_running = True
             self._prev_time = time.time()
@@ -130,6 +134,7 @@ class CameraStream:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 self.consecutive_failed_reads = 0
                 logger.info("[THREAD 1 WATCHDOG] Camera reconnected successfully.")
             else:
@@ -147,10 +152,12 @@ class CameraStream:
 
             frame_id = self.total_frames_captured + 1
             t_start = time.time()
+            t1_cap = time.perf_counter()
             log_runtime_debug("CameraProducerThread", "_producer_loop", "[BEFORE_CAMERA_READ]", frame_id, 0.0)
 
             try:
                 ret, frame = self.cap.read()
+                t2_cap = time.perf_counter()
                 t_end = time.time()
                 elapsed_ms = (t_end - t_start) * 1000.0
 
@@ -166,13 +173,32 @@ class CameraStream:
                         self._current_fps = 1.0 / dt
                     self._prev_time = now
 
+                    t1_qw = time.perf_counter()
                     if self._frame_queue.full():
                         try:
                             self._frame_queue.get_nowait()
                         except queue.Empty:
                             pass
 
-                    self._frame_queue.put_nowait(frame)
+                    self._frame_queue.put_nowait((frame, meta if 'meta' in locals() else {}))
+                    t2_qw = time.perf_counter()
+
+                    meta = {
+                        "t_capture_start": t_start,
+                        "t_capture_end": t_end,
+                        "t_queue_enter": time.time(),
+                        "t1_cap": t1_cap,
+                        "t2_cap": t2_cap,
+                        "t1_qw": t1_qw,
+                        "t2_qw": t2_qw,
+                        "frame_id": frame_id
+                    }
+                    # Update queue item with completed meta
+                    try:
+                        self._frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    self._frame_queue.put_nowait((frame, meta))
                 else:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "FAIL_RET_FALSE")
                     self.consecutive_failed_reads += 1
@@ -188,14 +214,29 @@ class CameraStream:
                 time.sleep(0.01)
 
     def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
-        if not self.is_running:
-            return False, None
+        success, frame, _ = self.read_frame_with_meta()
+        return success, frame
 
-        try:
-            frame = self._frame_queue.get_nowait()
-            return True, frame
-        except queue.Empty:
-            return False, None
+    def read_frame_with_meta(self) -> Tuple[bool, Optional[np.ndarray], dict]:
+        if not self.is_running:
+            return False, None, {}
+
+        # Safely drain queue to get the NEWEST available frame (discarding outdated items)
+        latest_item = None
+        while not self._frame_queue.empty():
+            try:
+                latest_item = self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        if latest_item is None:
+            try:
+                latest_item = self._frame_queue.get_nowait()
+            except queue.Empty:
+                return False, None, {}
+
+        frame, meta = latest_item
+        return True, frame, meta
 
     def get_fps(self) -> float:
         return round(self._current_fps, 1)
