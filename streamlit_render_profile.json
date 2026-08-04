@@ -1,0 +1,9 @@
+{
+  "st_image_rendering_frequency_hz": 2611.0,
+  "fragment_execution_frequency_hz": 29.8,
+  "image_serialization_time_jpeg_ms": 7.82,
+  "image_serialization_time_png_ms": 6.03,
+  "browser_update_frequency_hz": 24.5,
+  "widget_rerender_frequency_hz": 1.0,
+  "max_theoretical_st_fps": 24.5,
+  "is_streamlit_limiting_fps_to_6fps": 

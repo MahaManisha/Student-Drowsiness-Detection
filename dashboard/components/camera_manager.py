@@ -14,8 +14,20 @@ import threading
 import numpy as np
 
 import config
+from collections import deque
+from dataclasses import dataclass
 from typing import Dict, Any, Tuple, Optional
 from utils.logger import get_logger
+
+@dataclass(frozen=True)
+class FrameSnapshot:
+    """Immutable single-frame snapshot payload containing video frame, telemetry, frame ID, and timestamp."""
+    rgb_frame: Optional[np.ndarray]
+    telemetry: Dict[str, Any]
+    frame_id: int
+    timestamp: float
+    success: bool = True
+
 
 from camera.camera import CameraStream
 from detection.face_mesh import FaceMeshDetector
@@ -36,7 +48,9 @@ logger = get_logger(__name__)
 
 
 def log_timeline_debug(thread_name: str, func_name: str, stage_marker: str, frame_id: int, elapsed_ms: float, status: str = "OK", extra: str = "") -> None:
-    """Logs standardized diagnostic entry into timeline_debug.log."""
+    """Logs standardized diagnostic entry into timeline_debug.log (fast-path for normal execution)."""
+    if status == "OK":
+        return
     try:
         now_str = datetime.datetime.now().isoformat()
         log_line = f"[{now_str}] | [{thread_name}] | [{func_name}] | [{stage_marker}] | Frame: {frame_id} | Elapsed: {elapsed_ms:.3f} ms | Status: {status} {extra}\n"
@@ -143,6 +157,16 @@ class DashboardCameraManager:
         self._result_lock: threading.Lock = threading.Lock()
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_telemetry: Dict[str, Any] = self._get_fallback_telemetry()
+        self._latest_snapshot: Optional[FrameSnapshot] = None
+        self._current_ai_fps: float = 0.0
+        self._ai_fps_timestamps: deque = deque()
+
+        # Pre-warm MediaPipe C++ graph during initialization to eliminate first-frame cold start latency
+        try:
+            warmup_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+            self.detector.detect_landmarks(warmup_frame)
+        except Exception:
+            pass
 
     def start(self) -> bool:
         try:
@@ -173,14 +197,27 @@ class DashboardCameraManager:
     def _ai_worker_loop(self) -> None:
         logger.info("[THREAD 2] AI Worker loop started.")
         while self._worker_running and self.is_connected:
-            t1_qr = time.perf_counter()
+            # Stage 1: Frame dequeue
+            t1_s1 = time.perf_counter()
             ret, frame, meta = self.camera.read_frame_with_meta()
-            t2_qr = time.perf_counter()
+            t2_s1 = time.perf_counter()
+            s1_dequeue_ms = (t2_s1 - t1_s1) * 1000.0
+
             if not ret or frame is None:
                 time.sleep(0.005)
                 continue
 
             t_ai_start = time.time()
+            self._ai_fps_timestamps.append(t_ai_start)
+            while self._ai_fps_timestamps and self._ai_fps_timestamps[0] < t_ai_start - 1.0:
+                self._ai_fps_timestamps.popleft()
+
+            if len(self._ai_fps_timestamps) > 1:
+                elapsed_ai = t_ai_start - self._ai_fps_timestamps[0]
+                self._current_ai_fps = (len(self._ai_fps_timestamps) - 1) / elapsed_ai if elapsed_ai > 0 else 0.0
+            else:
+                self._current_ai_fps = 0.0
+
             self.frame_counter += 1
             frame_id = meta.get("frame_id", self.frame_counter)
             h, w = frame.shape[:2]
@@ -189,24 +226,25 @@ class DashboardCameraManager:
             t_cap_end = meta.get("t_capture_end", t_ai_start)
             t_q_enter = meta.get("t_queue_enter", t_ai_start)
 
-            t1_cap = meta.get("t1_cap", t1_qr)
-            t2_cap = meta.get("t2_cap", t1_qr)
-            t1_qw = meta.get("t1_qw", t1_qr)
-            t2_qw = meta.get("t2_qw", t1_qr)
+            t1_cap = meta.get("t1_cap", t1_s1)
+            t2_cap = meta.get("t2_cap", t1_s1)
+            t1_qw = meta.get("t1_qw", t1_s1)
+            t2_qw = meta.get("t2_qw", t1_s1)
 
             camera_buffer_delay_ms = max(0.0, (t_cap_end - t_cap_start) * 1000.0)
             queue_delay_ms = max(0.0, (t_ai_start - t_q_enter) * 1000.0)
 
             try:
-                # Stage 4: MediaPipe Face Mesh Diagnostic Stage
-                t1_mp = time.perf_counter()
+                # Stage 2: MediaPipe Face Mesh Diagnostic Stage
+                t1_s3 = time.perf_counter()
                 t_mp_start = time.time()
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_MEDIAPIPE]", frame_id, 0.0)
                 
                 has_face, all_landmarks = self.detector.detect_landmarks(frame)
                 
-                t2_mp = time.perf_counter()
+                t2_s3 = time.perf_counter()
                 t_mp_end = time.time()
+                s3_mp_ms = (t2_s3 - t1_s3) * 1000.0
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_MEDIAPIPE]", frame_id, (t_mp_end - t_mp_start) * 1000.0, "OK", f"has_face={has_face}")
 
                 right_ear, left_ear, avg_ear = None, None, None
@@ -217,16 +255,16 @@ class DashboardCameraManager:
                 pose_valid = False
 
                 t_ear_mar_start = time.time()
-                t1_ear, t2_ear = time.perf_counter(), time.perf_counter()
-                t1_mar, t2_mar = time.perf_counter(), time.perf_counter()
+                s4_ear_ms = 0.0
+                s5_mar_ms = 0.0
 
                 if has_face and all_landmarks:
                     face_landmarks = all_landmarks[0]
 
                     frame = self.detector.draw_landmarks(frame)
 
-                    # Stage 5: EAR calculation
-                    t1_ear = time.perf_counter()
+                    # Stage 3: EAR calculation
+                    t1_s4 = time.perf_counter()
                     t_ear_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_EAR]", frame_id, 0.0)
 
@@ -235,12 +273,13 @@ class DashboardCameraManager:
                     right_ear, left_ear, avg_ear = self.ear_calculator.calculate_ear(right_eye, left_eye)
                     right_state, left_state, overall_state = self.classifier.classify_both_eyes(right_ear, left_ear)
 
-                    t2_ear = time.perf_counter()
+                    t2_s4 = time.perf_counter()
+                    s4_ear_ms = (t2_s4 - t1_s4) * 1000.0
                     t_ear_end = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_EAR]", frame_id, (t_ear_end - t_ear_start) * 1000.0, "OK", f"avg_ear={avg_ear}")
 
-                    # Stage 6: MAR calculation
-                    t1_mar = time.perf_counter()
+                    # Stage 4: MAR calculation
+                    t1_s5 = time.perf_counter()
                     t_mar_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_MAR]", frame_id, 0.0)
 
@@ -248,23 +287,34 @@ class DashboardCameraManager:
                     frame = self.mouth_extractor.draw_mouth_landmarks(frame, inner_lip, outer_lip)
                     mar_val = self.mar_calculator.calculate_mar(inner_lip)
 
-                    t2_mar = time.perf_counter()
+                    t2_s5 = time.perf_counter()
+                    s5_mar_ms = (t2_s5 - t1_s5) * 1000.0
                     t_mar_end = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_MAR]", frame_id, (t_mar_end - t_mar_start) * 1000.0, "OK", f"mar={mar_val}")
 
                 t_ear_mar_complete = time.time()
 
-                # Update temporal sequence analyzers
+                # Stage 5: Blink detection
+                t1_s6 = time.perf_counter()
                 self.temporal_analyzer.update(
                     right_state=right_state,
                     left_state=left_state,
                     overall_state=overall_state,
                     avg_ear=avg_ear,
                 )
-                self.yawn_detector.update(mar_val)
+                t2_s6 = time.perf_counter()
+                s6_blink_ms = (t2_s6 - t1_s6) * 1000.0
 
-                # Stage 7: Head Pose
-                t1_pose = time.perf_counter()
+                # Stage 6: Yawn detection
+                t1_s7 = time.perf_counter()
+                self.yawn_detector.update(mar_val)
+                mouth_state_enum = self.yawn_detector.classify_mouth_state(mar_val)
+                mouth_state_str = mouth_state_enum.value
+                t2_s7 = time.perf_counter()
+                s7_yawn_ms = (t2_s7 - t1_s7) * 1000.0
+
+                # Stage 7: Head Pose estimation
+                t1_s8 = time.perf_counter()
                 t_pose_start = time.time()
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_HEAD_POSE]", frame_id, 0.0)
 
@@ -276,12 +326,13 @@ class DashboardCameraManager:
                     pitch, yaw, roll = pose_result.pitch, pose_result.yaw, pose_result.roll
                     pose_valid = True
 
-                t2_pose = time.perf_counter()
+                t2_s8 = time.perf_counter()
+                s8_headpose_ms = (t2_s8 - t1_s8) * 1000.0
                 t_pose_end = time.time()
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_HEAD_POSE]", frame_id, (t_pose_end - t_pose_start) * 1000.0, "OK", f"pitch={pitch:.1f}")
 
                 # Stage 8: Decision Engine
-                t1_dec = time.perf_counter()
+                t1_s9 = time.perf_counter()
                 t_dec_start = time.time()
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_DECISION_ENGINE]", frame_id, 0.0)
 
@@ -305,16 +356,21 @@ class DashboardCameraManager:
                 score_val = decision_metrics.get("drowsiness_score", 0.0)
                 state_raw = decision_metrics.get("drowsiness_state", "ALERT")
 
-                t2_dec = time.perf_counter()
-                t_dec_end = time.time()
-                log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_DECISION_ENGINE]", frame_id, (t_dec_end - t_dec_start) * 1000.0, "OK", f"score={score_val}")
-
-                # Alert Manager Process
+                # Stage 9: Alert Manager Processing
+                t1_alert = time.perf_counter()
                 drowsiness_result = self.decision_engine.drowsiness_result
                 if drowsiness_result is not None:
                     self.alert_manager.process_result(drowsiness_result)
+                t2_alert = time.perf_counter()
+                s9_alert_ms = (t2_alert - t1_alert) * 1000.0
 
-                # Update Session Statistics
+                t2_s9 = time.perf_counter()
+                s9_decision_ms = (t2_s9 - t1_s9) * 1000.0
+                t_dec_end = time.time()
+                log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[AFTER_DECISION_ENGINE]", frame_id, (t_dec_end - t_dec_start) * 1000.0, "OK", f"score={score_val}")
+
+                # Stage 10: Session Statistics Update
+                t1_s10_stat = time.perf_counter()
                 self.highest_score = max(self.highest_score, score_val)
                 closed_dur = self.temporal_analyzer.get_closed_duration_seconds()
                 self.longest_closure = max(self.longest_closure, closed_dur)
@@ -328,6 +384,8 @@ class DashboardCameraManager:
                     yawn_count=self.yawn_detector.get_yawn_count(),
                     closed_duration=closed_dur
                 )
+                t2_s10_stat = time.perf_counter()
+                s10_stat_ms = (t2_s10_stat - t1_s10_stat) * 1000.0
 
                 elapsed_seconds = int(time.time() - self.start_time)
                 hrs = elapsed_seconds // 3600
@@ -336,8 +394,6 @@ class DashboardCameraManager:
                 session_time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
 
                 thresh_val = self.classifier.get_threshold()
-                mouth_state_enum = self.yawn_detector.classify_mouth_state(mar_val)
-                mouth_state_str = mouth_state_enum.value
 
                 metrics_payload = {
                     "session_time": session_time_str,
@@ -376,25 +432,26 @@ class DashboardCameraManager:
                     "alert_status": "HUD READY | AUDIO READY"
                 }
 
-                # Stage 9: HUD visualization
-                t1_hud = time.perf_counter()
+                # Stage 11: HUD visualization drawing
+                t1_s10 = time.perf_counter()
                 frame = self.visualizer.draw(frame, metrics_payload)
-                t2_hud = time.perf_counter()
+                t2_s10 = time.perf_counter()
+                s10_hud_ms = (t2_s10 - t1_s10) * 1000.0
 
-                # Single-pass BGR to RGB Conversion & High-Speed JPEG Encoding
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                success_enc, jpeg_buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-                jpeg_bytes = jpeg_buf.tobytes() if success_enc else None
+                # Stage 12: BGR to RGB Conversion (In-place/direct conversion)
+                t1_s2 = time.perf_counter()
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=frame)
+                t2_s2 = time.perf_counter()
+                s2_bgr2rgb_ms = (t2_s2 - t1_s2) * 1000.0
 
                 t_telemetry_published = time.time()
                 mediapipe_delay_ms = (t_mp_end - t_mp_start) * 1000.0
                 ear_mar_delay_ms = (t_ear_mar_complete - t_ear_mar_start) * 1000.0
                 ai_processing_delay_ms = (t_telemetry_published - t_ai_start) * 1000.0
 
-                # Stage 10: Telemetry publication
-                t1_pub = time.perf_counter()
+                # Stage 13: Telemetry publication & dict creation
+                t1_s11 = time.perf_counter()
 
-                # Telemetry dictionary for Streamlit UI with precise stage latency metrics
                 telemetry = {
                     "has_face": has_face,
                     "session_time_str": session_time_str,
@@ -432,21 +489,35 @@ class DashboardCameraManager:
                     "audio_status": "READY",
                     "session_stats": self.stats_tracker.get_stats(),
                     "events": _format_events_to_schema(self.alert_manager.event_log),
-                    "jpeg_bytes": jpeg_bytes,
                     "frame_id": frame_id,
                     "perf_stages": {
                         "1_camera_capture": (t2_cap - t1_cap) * 1000.0,
                         "2_queue_write": (t2_qw - t1_qw) * 1000.0,
-                        "3_queue_read": (t2_qr - t1_qr) * 1000.0,
-                        "4_mediapipe": (t2_mp - t1_mp) * 1000.0,
-                        "5_ear": (t2_ear - t1_ear) * 1000.0,
-                        "6_mar": (t2_mar - t1_mar) * 1000.0,
-                        "7_head_pose": (t2_pose - t1_pose) * 1000.0,
-                        "8_decision_engine": (t2_dec - t1_dec) * 1000.0,
-                        "9_hud_visualization": (t2_hud - t1_hud) * 1000.0,
+                        "3_queue_read": s1_dequeue_ms,
+                        "4_mediapipe": s3_mp_ms,
+                        "5_ear": s4_ear_ms,
+                        "6_mar": s5_mar_ms,
+                        "7_head_pose": s8_headpose_ms,
+                        "8_decision_engine": s9_decision_ms,
+                        "9_hud_visualization": s10_hud_ms,
                         "t1_cap": t1_cap,
                         "t2_cap": t2_cap,
-                        "t1_pub": t1_pub,
+                        "t1_pub": t1_s11,
+                    },
+                    "ai_13_stages": {
+                        "1_frame_dequeue": s1_dequeue_ms,
+                        "2_mediapipe_process": s3_mp_ms,
+                        "3_ear_calculation": s4_ear_ms,
+                        "4_mar_calculation": s5_mar_ms,
+                        "5_blink_detection": s6_blink_ms,
+                        "6_yawn_detection": s7_yawn_ms,
+                        "7_head_pose_estimation": s8_headpose_ms,
+                        "8_decision_engine": s9_decision_ms,
+                        "9_alert_manager": s9_alert_ms,
+                        "10_hud_drawing": s10_hud_ms,
+                        "11_bgr_to_rgb": s2_bgr2rgb_ms,
+                        "12_telemetry_creation": 0.0,
+                        "13_pub_snapshot": 0.0,
                     },
                     "latency": {
                         "camera_buffer_delay_ms": camera_buffer_delay_ms,
@@ -461,30 +532,88 @@ class DashboardCameraManager:
                         "t_mediapipe_complete": t_mp_end,
                         "t_ear_mar_complete": t_ear_mar_complete,
                         "t_telemetry_published": t_telemetry_published,
+                    },
+                    "live_perf": {
+                        "camera_fps": self.camera.get_fps(),
+                        "producer_fps": meta.get("producer_fps", self.camera.get_fps()),
+                        "ai_worker_fps": round(getattr(self, "_current_ai_fps", 0.0), 1),
+                        "queue_len": meta.get("queue_len", 0),
+                        "latest_frame_id": frame_id,
+                        "t_videocapture_read_ms": meta.get("t_videocapture_read_ms", 0.0),
+                        "t_facemesh_ms": s3_mp_ms,
+                        "t_ear_ms": s4_ear_ms,
+                        "t_mar_ms": s5_mar_ms,
+                        "t_headpose_ms": s8_headpose_ms,
+                        "t_hud_draw_ms": s10_hud_ms,
+                        "t_rgb_conversion_ms": s2_bgr2rgb_ms,
+                        "ai_total_frame_ms": (time.time() - t_ai_start) * 1000.0
                     }
                 }
+                t2_s11 = time.perf_counter()
+                s11_telemetry_dict_ms = (t2_s11 - t1_s11) * 1000.0
+                telemetry["ai_13_stages"]["12_telemetry_creation"] = s11_telemetry_dict_ms
 
-                # Publish Atomic Result Payload under Mutex Lock
-                with self._result_lock:
-                    t2_pub = time.perf_counter()
-                    telemetry["perf_stages"]["10_telemetry_publication"] = (t2_pub - t1_pub) * 1000.0
-                    telemetry["perf_stages"]["t2_pub"] = t2_pub
-                    self._latest_rgb_frame = rgb_frame
-                    self._latest_telemetry = telemetry
+                # Construct Immutable Single-Frame Snapshot Payload
+                snapshot = FrameSnapshot(
+                    rgb_frame=rgb_frame,
+                    telemetry=telemetry,
+                    frame_id=frame_id,
+                    timestamp=t_telemetry_published,
+                    success=True
+                )
+
+                # Publish Atomic Result Payload without lock contention
+                t1_s12 = time.perf_counter()
+                self._latest_rgb_frame = rgb_frame
+                self._latest_telemetry = telemetry
+                self._latest_snapshot = snapshot
+                t2_s12 = time.perf_counter()
+                s12_pub_ms = (t2_s12 - t1_s12) * 1000.0
+
+                telemetry["ai_13_stages"]["13_pub_snapshot"] = s12_pub_ms
+                telemetry["perf_stages"]["10_telemetry_publication"] = s12_pub_ms
+                telemetry["perf_stages"]["t2_pub"] = t2_s12
+
+                log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[FRAME_SNAPSHOT_PUBLISHED]", frame_id, (time.time() - t_ai_start) * 1000.0, "OK")
 
             except Exception as e:
                 tb_str = traceback.format_exc().replace('\n', ' ')
                 log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[WORKER_LOOP]", frame_id, 0.0, "EXCEPT", tb_str)
                 logger.error(f"[THREAD 2] Error in AI worker loop: {e}", exc_info=True)
 
-    def get_processed_frame(self) -> Tuple[bool, Optional[np.ndarray], Dict[str, Any]]:
-        if not self.is_connected:
-            return False, None, self._get_fallback_telemetry()
+    def get_latest_snapshot(self) -> FrameSnapshot:
+        """
+        Authoritative Frame Snapshot Accessor (Phase F1).
+        Returns the single immutable FrameSnapshot instance for the current refresh cycle.
+        Guarantees zero array copying and ensures all UI components consume identical telemetry.
+        Reads atomic reference without lock contention.
+        """
+        snap = self._latest_snapshot
+        if snap is not None:
+            return snap
 
-        with self._result_lock:
-            if self._latest_rgb_frame is not None:
-                return True, self._latest_rgb_frame.copy(), self._latest_telemetry.copy()
-            return False, None, self._latest_telemetry.copy()
+        if not self.is_connected:
+            return FrameSnapshot(
+                rgb_frame=None,
+                telemetry=self._get_fallback_telemetry(),
+                frame_id=0,
+                timestamp=time.time(),
+                success=False
+            )
+
+        return FrameSnapshot(
+            rgb_frame=self._latest_rgb_frame,
+            telemetry=self._latest_telemetry,
+            frame_id=self.frame_counter,
+            timestamp=time.time(),
+            success=self._latest_rgb_frame is not None
+        )
+
+    def get_processed_frame(self) -> Tuple[bool, Optional[np.ndarray], Dict[str, Any]]:
+        """Backwards compatible accessor delegating to get_latest_snapshot()."""
+        snap = self.get_latest_snapshot()
+        return snap.success, snap.rgb_frame, snap.telemetry
+
 
     def _get_fallback_telemetry(self) -> Dict[str, Any]:
         return {

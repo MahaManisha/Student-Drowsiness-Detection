@@ -13,6 +13,7 @@ import datetime
 import traceback
 import threading
 import numpy as np
+from collections import deque
 from typing import Optional, Tuple, Generator, Union
 
 from config import CAMERA_ID, WEBCAM_WIDTH, WEBCAM_HEIGHT, TARGET_FPS
@@ -22,7 +23,9 @@ logger = get_logger(__name__)
 
 
 def log_runtime_debug(thread_name: str, func_name: str, stage_marker: str, frame_id: int, elapsed_ms: float, status: str = "OK", extra: str = "") -> None:
-    """Logs standardized diagnostic entry into runtime_debug.log."""
+    """Logs standardized diagnostic entry into runtime_debug.log (fast-path for normal execution)."""
+    if status == "OK":
+        return
     try:
         now_str = datetime.datetime.now().isoformat()
         log_line = f"[{now_str}] | [{thread_name}] | [{func_name}] | [{stage_marker}] | Frame: {frame_id} | Elapsed: {elapsed_ms:.3f} ms | Status: {status} {extra}\n"
@@ -55,6 +58,7 @@ class CameraStream:
         self._frame_queue: queue.Queue = queue.Queue(maxsize=1)
         self._producer_thread: Optional[threading.Thread] = None
         self._lock: threading.Lock = threading.Lock()
+        self._queue_lock: threading.Lock = threading.Lock()
 
         self.consecutive_failed_reads: int = 0
         self.last_frame_timestamp: float = 0.0
@@ -62,14 +66,28 @@ class CameraStream:
 
         self._prev_time: float = 0.0
         self._current_fps: float = 0.0
+        self._fps_timestamps: deque = deque()
 
     def is_available(self) -> bool:
+        """
+        Safely checks camera availability without creating duplicate VideoCapture
+        instances if the stream is already active.
+        """
+        with self._lock:
+            if self.cap is not None and self.cap.isOpened():
+                return True
+
+        if self.is_running:
+            return self.cap is not None and self.cap.isOpened()
+
         try:
-            temp_cap = cv2.VideoCapture(self.source)
+            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+            if not temp_cap.isOpened():
+                temp_cap = cv2.VideoCapture(self.source)
+
             if temp_cap.isOpened():
                 ret, _ = temp_cap.read()
                 temp_cap.release()
-                time.sleep(0.1)
                 return ret
             return False
         except Exception as e:
@@ -77,89 +95,125 @@ class CameraStream:
             return False
 
     def start(self) -> bool:
-        if self.is_running and self.cap is not None and self.cap.isOpened():
-            logger.info("Camera stream is already active.")
-            return True
+        with self._lock:
+            if self.is_running and self.cap is not None and self.cap.isOpened():
+                logger.info("Camera stream is already active.")
+                return True
 
-        logger.info(f"[THREAD 1] Opening camera source: {self.source} ({self.width}x{self.height})...")
+            logger.info(f"[THREAD 1] Opening camera source: {self.source} ({self.width}x{self.height})...")
 
-        try:
-            self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
-
-            if not self.cap.isOpened():
+            try:
                 if self.cap is not None:
-                    self.cap.release()
-                self.cap = cv2.VideoCapture(self.source)
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
 
-            if not self.cap.isOpened():
-                logger.error(f"[THREAD 1] Failed to open camera source: {self.source}")
-                self.is_running = False
-                return False
+                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if not self.cap.isOpened():
+                    if self.cap is not None:
+                        self.cap.release()
+                    self.cap = cv2.VideoCapture(self.source)
 
-            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}. CAP_PROP_BUFFERSIZE=1.")
+                if not self.cap.isOpened():
+                    logger.error(f"[THREAD 1] Failed to open camera source: {self.source}")
+                    self.is_running = False
+                    return False
 
-            self.is_running = True
-            self._prev_time = time.time()
-            self.last_frame_timestamp = time.time()
-            self.consecutive_failed_reads = 0
-
-            self._producer_thread = threading.Thread(target=self._producer_loop, name="CameraProducerThread", daemon=True)
-            self._producer_thread.start()
-            return True
-
-        except Exception as e:
-            logger.error(f"[THREAD 1] Unhandled error initializing camera: {e}", exc_info=True)
-            self.is_running = False
-            return False
-
-    def _reconnect_camera(self) -> None:
-        logger.warning("[THREAD 1 WATCHDOG] Frame drop stall detected. Auto-reconnecting camera hardware...")
-        try:
-            if self.cap is not None:
-                self.cap.release()
-            
-            time.sleep(0.2)
-            self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
-            if not self.cap.isOpened():
-                self.cap = cv2.VideoCapture(self.source)
-
-            if self.cap.isOpened():
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}. CAP_PROP_BUFFERSIZE=1.")
+
+                self.is_running = True
+                self._prev_time = time.time()
+                self.last_frame_timestamp = time.time()
                 self.consecutive_failed_reads = 0
-                logger.info("[THREAD 1 WATCHDOG] Camera reconnected successfully.")
-            else:
-                logger.error("[THREAD 1 WATCHDOG] Reconnection attempt failed.")
-        except Exception as e:
-            logger.error(f"[THREAD 1 WATCHDOG] Error during camera reconnection: {e}")
+
+                if self._producer_thread is None or not self._producer_thread.is_alive():
+                    self._producer_thread = threading.Thread(target=self._producer_loop, name="CameraProducerThread", daemon=True)
+                    self._producer_thread.start()
+                return True
+
+            except Exception as e:
+                logger.error(f"[THREAD 1] Unhandled error initializing camera: {e}", exc_info=True)
+                self.is_running = False
+                return False
+
+    def _reconnect_camera(self) -> None:
+        """Reconnects camera hardware ONLY during true disconnects or sustained long-term failure."""
+        logger.warning("[THREAD 1 WATCHDOG] True camera disconnect or sustained failure detected. Reconnecting hardware...")
+        with self._lock:
+            try:
+                if self.cap is not None:
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
+
+                time.sleep(0.5)
+
+                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+                if not self.cap.isOpened():
+                    if self.cap is not None:
+                        self.cap.release()
+                    self.cap = cv2.VideoCapture(self.source)
+
+                if self.cap.isOpened():
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                    self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    self.consecutive_failed_reads = 0
+                    self.last_frame_timestamp = time.time()
+                    logger.info("[THREAD 1 WATCHDOG] Camera reconnected successfully.")
+                else:
+                    logger.error("[THREAD 1 WATCHDOG] Reconnection attempt failed.")
+            except Exception as e:
+                logger.error(f"[THREAD 1 WATCHDOG] Error during camera reconnection: {e}")
 
     def _producer_loop(self) -> None:
         logger.info("[THREAD 1] Camera Producer thread loop active (30 FPS target).")
         while self.is_running:
-            if self.cap is None or not self.cap.isOpened():
-                self._reconnect_camera()
-                time.sleep(0.5)
-                continue
-
-            frame_id = self.total_frames_captured + 1
-            t_start = time.time()
-            t1_cap = time.perf_counter()
-            log_runtime_debug("CameraProducerThread", "_producer_loop", "[BEFORE_CAMERA_READ]", frame_id, 0.0)
-
             try:
-                ret, frame = self.cap.read()
-                t2_cap = time.perf_counter()
-                t_end = time.time()
-                elapsed_ms = (t_end - t_start) * 1000.0
+                if self.cap is None or not self.cap.isOpened():
+                    time_since_last = time.time() - self.last_frame_timestamp if self.last_frame_timestamp > 0 else 0.0
+                    logger.warning(
+                        f"[WATCHDOG] Camera closed/invalid. Time since last frame: {time_since_last:.3f}s | "
+                        f"Consecutive failures: {self.consecutive_failed_reads} | Reconnecting..."
+                    )
+                    self._reconnect_camera()
+                    time.sleep(0.5)
+                    continue
+
+                frame_id = self.total_frames_captured + 1
+                t_start = time.time()
+                t1_cap = time.perf_counter()
+                log_runtime_debug("CameraProducerThread", "_producer_loop", "[BEFORE_CAMERA_READ]", frame_id, 0.0)
+
+                ret = False
+                frame = None
+                cap_ref = None
+                with self._lock:
+                    if self.cap is not None and self.cap.isOpened():
+                        cap_ref = self.cap
+
+                if cap_ref is not None:
+                    t_cap_1 = time.perf_counter()
+                    ret, frame = cap_ref.read()
+                    t_cap_2 = time.perf_counter()
+
+                    t2_cap = t_cap_2
+                    t_end = time.time()
+                    elapsed_ms = (t_end - t_start) * 1000.0
+                    t_videocapture_read_ms = (t_cap_2 - t_cap_1) * 1000.0
 
                 if ret and frame is not None:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "OK", f"shape={frame.shape}")
@@ -168,70 +222,91 @@ class CameraStream:
                     now = time.time()
                     self.last_frame_timestamp = now
 
-                    dt = now - self._prev_time
-                    if dt > 0:
-                        self._current_fps = 1.0 / dt
-                    self._prev_time = now
+                    self._fps_timestamps.append(now)
+                    while self._fps_timestamps and self._fps_timestamps[0] < now - 1.0:
+                        self._fps_timestamps.popleft()
+
+                    if len(self._fps_timestamps) > 1:
+                        elapsed = now - self._fps_timestamps[0]
+                        self._current_fps = (len(self._fps_timestamps) - 1) / elapsed if elapsed > 0 else 0.0
+                    else:
+                        self._current_fps = 0.0
 
                     t1_qw = time.perf_counter()
-                    if self._frame_queue.full():
-                        try:
-                            self._frame_queue.get_nowait()
-                        except queue.Empty:
-                            pass
+                    with self._queue_lock:
+                        if self._frame_queue.full():
+                            try:
+                                self._frame_queue.get_nowait()
+                            except queue.Empty:
+                                pass
+                        t2_qw = time.perf_counter()
+                        meta = {
+                            "t_capture_start": t_start,
+                            "t_capture_end": t_end,
+                            "t_queue_enter": time.time(),
+                            "t1_cap": t1_cap,
+                            "t2_cap": t2_cap,
+                            "t1_qw": t1_qw,
+                            "t2_qw": t2_qw,
+                            "frame_id": frame_id,
+                            "t_videocapture_read_ms": t_videocapture_read_ms,
+                            "producer_fps": round(self._current_fps, 1),
+                            "queue_len": 1
+                        }
+                        self._frame_queue.put_nowait((frame, meta))
 
-                    self._frame_queue.put_nowait((frame, meta if 'meta' in locals() else {}))
-                    t2_qw = time.perf_counter()
-
-                    meta = {
-                        "t_capture_start": t_start,
-                        "t_capture_end": t_end,
-                        "t_queue_enter": time.time(),
-                        "t1_cap": t1_cap,
-                        "t2_cap": t2_cap,
-                        "t1_qw": t1_qw,
-                        "t2_qw": t2_qw,
-                        "frame_id": frame_id
-                    }
-                    # Update queue item with completed meta
-                    try:
-                        self._frame_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    self._frame_queue.put_nowait((frame, meta))
                 else:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "FAIL_RET_FALSE")
                     self.consecutive_failed_reads += 1
                     time.sleep(0.005)
 
-                    if self.consecutive_failed_reads >= 45:
+                    now = time.time()
+                    time_since_last = now - self.last_frame_timestamp if self.last_frame_timestamp > 0 else 0.0
+
+                    if self.consecutive_failed_reads == 1 or self.consecutive_failed_reads % 50 == 0:
+                        logger.warning(
+                            f"[WATCHDOG] Temporary cap.read() fail. Time since last frame: {time_since_last:.3f}s | "
+                            f"Consecutive failures: {self.consecutive_failed_reads}"
+                        )
+
+                    # Only reconnect after true hardware disconnect (150+ consecutive failed reads AND > 15s)
+                    if self.consecutive_failed_reads >= 150 and time_since_last >= 15.0:
+                        logger.error(
+                            f"[WATCHDOG] True camera disconnect detected (150+ failed reads over {time_since_last:.1f}s). Triggering reconnection."
+                        )
                         self._reconnect_camera()
 
             except Exception as e:
                 tb_str = traceback.format_exc().replace('\n', ' ')
-                log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, 0.0, "EXCEPT", tb_str)
+                log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", self.total_frames_captured + 1, 0.0, "EXCEPT", tb_str)
                 self.consecutive_failed_reads += 1
-                time.sleep(0.01)
+                logger.error(f"[THREAD 1] Unexpected exception in producer loop: {e}")
+                time.sleep(0.05)
 
     def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
         success, frame, _ = self.read_frame_with_meta()
         return success, frame
 
-    def read_frame_with_meta(self) -> Tuple[bool, Optional[np.ndarray], dict]:
+    def read_frame_with_meta(self, timeout: float = 0.0) -> Tuple[bool, Optional[np.ndarray], dict]:
         if not self.is_running:
             return False, None, {}
 
-        # Safely drain queue to get the NEWEST available frame (discarding outdated items)
         latest_item = None
-        while not self._frame_queue.empty():
-            try:
-                latest_item = self._frame_queue.get_nowait()
-            except queue.Empty:
-                break
+        with self._queue_lock:
+            while True:
+                try:
+                    latest_item = self._frame_queue.get_nowait()
+                except queue.Empty:
+                    break
 
         if latest_item is None:
             try:
-                latest_item = self._frame_queue.get_nowait()
+                # If queue is empty right after startup, wait up to 0.05s for first frame
+                wait_time = 0.05 if self.total_frames_captured <= 1 else timeout
+                if wait_time > 0:
+                    latest_item = self._frame_queue.get(block=True, timeout=wait_time)
+                else:
+                    return False, None, {}
             except queue.Empty:
                 return False, None, {}
 
@@ -268,10 +343,16 @@ class CameraStream:
         self.is_running = False
 
         if self._producer_thread is not None and self._producer_thread.is_alive():
-            self._producer_thread.join(timeout=1.0)
+            self._producer_thread.join(timeout=2.0)
+            self._producer_thread = None
 
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
+        with self._lock:
+            if self.cap is not None:
+                try:
+                    self.cap.release()
+                except Exception as e:
+                    logger.warning(f"[THREAD 1] Exception releasing VideoCapture: {e}")
+                self.cap = None
 
         logger.info("[THREAD 1] Camera stream stopped.")
+
