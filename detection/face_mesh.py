@@ -74,7 +74,7 @@ class FaceMeshDetector:
 
     def detect_landmarks(
         self, frame: np.ndarray
-    ) -> Tuple[bool, List[List[Tuple[int, int, float]]]]:
+    ) -> Tuple[bool, List[List[Tuple[int, int, float]]], Optional[Any]]:
         """
         Processes a BGR image frame to detect faces and extract facial landmark coordinates.
 
@@ -82,13 +82,14 @@ class FaceMeshDetector:
             frame (np.ndarray): BGR image frame captured from camera.
 
         Returns:
-            Tuple[bool, List[List[Tuple[int, int, float]]]]:
+            Tuple[bool, List[List[Tuple[int, int, float]]], Optional[Any]]:
                 - bool: True if at least one face was detected, False otherwise.
                 - List[List[Tuple[int, int, float]]]: List of faces, where each face is a list
                   of (x_pixel, y_pixel, z_depth) landmark coordinate tuples.
+                - Optional[Any]: Raw MediaPipe face_landmarks protobuf for single-pass drawing.
         """
         if frame is None or frame.size == 0:
-            return False, []
+            return False, [], None
 
         try:
             h, w, _ = frame.shape
@@ -96,7 +97,7 @@ class FaceMeshDetector:
 
             results = self.face_mesh.process(rgb_frame)
             if not results.multi_face_landmarks:
-                return False, []
+                return False, [], None
 
             all_faces_landmarks: List[List[Tuple[int, int, float]]] = []
             for face_landmarks in results.multi_face_landmarks:
@@ -106,24 +107,27 @@ class FaceMeshDetector:
                     face_coords.append((cx, cy, lm.z))
                 all_faces_landmarks.append(face_coords)
 
-            return True, all_faces_landmarks
+            return True, all_faces_landmarks, results.multi_face_landmarks[0]
 
         except Exception as e:
             logger.error(f"Error processing frame in FaceMeshDetector: {e}")
-            return False, []
+            return False, [], None
 
     def draw_landmarks(
         self,
         frame: np.ndarray,
+        face_landmarks_proto: Optional[Any] = None,
         draw_tessellation: bool = True,
         draw_contours: bool = True,
         draw_irises: bool = True,
     ) -> np.ndarray:
         """
         Renders MediaPipe's facial mesh connections and landmark points onto the frame.
+        Uses pre-computed face_landmarks_proto to avoid running MediaPipe process() a second time.
 
         Args:
             frame (np.ndarray): Input BGR image frame.
+            face_landmarks_proto (Optional[Any]): Pre-computed MediaPipe face landmarks protobuf.
             draw_tessellation (bool): Render full facial mesh grid.
             draw_contours (bool): Highlight eye, lip, and face oval contours.
             draw_irises (bool): Render iris landmark circles.
@@ -135,35 +139,38 @@ class FaceMeshDetector:
             return frame
 
         try:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            proto_to_draw = face_landmarks_proto
+            if proto_to_draw is None:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.face_mesh.process(rgb_frame)
+                if results.multi_face_landmarks:
+                    proto_to_draw = results.multi_face_landmarks[0]
 
-            results = self.face_mesh.process(rgb_frame)
-            if results.multi_face_landmarks:
-                for face_landmarks in results.multi_face_landmarks:
-                    if draw_tessellation:
-                        self.mp_drawing.draw_landmarks(
-                            image=frame,
-                            landmark_list=face_landmarks,
-                            connections=self.mp_face_mesh.FACEMESH_TESSELATION,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_tesselation_style(),
-                        )
-                    if draw_contours:
-                        self.mp_drawing.draw_landmarks(
-                            image=frame,
-                            landmark_list=face_landmarks,
-                            connections=self.mp_face_mesh.FACEMESH_CONTOURS,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_contours_style(),
-                        )
-                    if draw_irises and self.refine_landmarks:
-                        self.mp_drawing.draw_landmarks(
-                            image=frame,
-                            landmark_list=face_landmarks,
-                            connections=self.mp_face_mesh.FACEMESH_IRISES,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_iris_connections_style(),
-                        )
+            if proto_to_draw is not None:
+                if draw_tessellation:
+                    self.mp_drawing.draw_landmarks(
+                        image=frame,
+                        landmark_list=proto_to_draw,
+                        connections=self.mp_face_mesh.FACEMESH_TESSELATION,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_tesselation_style(),
+                    )
+                if draw_contours:
+                    self.mp_drawing.draw_landmarks(
+                        image=frame,
+                        landmark_list=proto_to_draw,
+                        connections=self.mp_face_mesh.FACEMESH_CONTOURS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_contours_style(),
+                    )
+                if draw_irises and self.refine_landmarks:
+                    self.mp_drawing.draw_landmarks(
+                        image=frame,
+                        landmark_list=proto_to_draw,
+                        connections=self.mp_face_mesh.FACEMESH_IRISES,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_iris_connections_style(),
+                    )
 
             return frame
 

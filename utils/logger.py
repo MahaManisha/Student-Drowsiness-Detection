@@ -15,15 +15,18 @@ from pathlib import Path
 from config import LOGS_DIR, LOG_LEVEL
 
 
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """Windows-safe RotatingFileHandler that silently catches PermissionError during file rollover."""
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except (PermissionError, OSError):
+            pass
+
+
 def setup_logger(name: str = "StudentDrowsinessDetection") -> logging.Logger:
     """
     Configures and returns a logger instance with console and rotating file handlers.
-
-    Args:
-        name (str): Component or module name (e.g., 'camera', 'detection', 'alerts').
-
-    Returns:
-        logging.Logger: Configured logger instance.
     """
     logger = logging.getLogger(name)
 
@@ -51,8 +54,8 @@ def setup_logger(name: str = "StudentDrowsinessDetection") -> logging.Logger:
     console_handler.setFormatter(log_formatter)
     logger.addHandler(console_handler)
 
-    # 2. Rotating File Handler (Saves to output/logs/system.log with 5MB rotation)
-    file_handler = RotatingFileHandler(
+    # 2. Safe Rotating File Handler (Saves to output/logs/system.log with 5MB rotation)
+    file_handler = SafeRotatingFileHandler(
         filename=log_file_path,
         maxBytes=5 * 1024 * 1024,  # 5 MB per log file
         backupCount=5,             # Keep up to 5 backup log files

@@ -157,7 +157,7 @@ def render_live_runtime_instrumentation(snapshot: Any, t_st_image_ms: float, st_
                 </div>
                 <div style="background:#111827; padding:6px; border-radius:6px;">
                     <div style="font-size:0.7rem; color:#9CA3AF;">Browser Display FPS</div>
-                    <div style="font-size:1.1rem; font-weight:bold; color:#EF4444;">{browser_fps:.1f}</div>
+                    <div style="font-size:0.9rem; font-weight:bold; color:#9CA3AF;">N/A (unmeasured)</div>
                 </div>
             </div>
 
@@ -212,11 +212,16 @@ def render_fast_tier(camera_mgr, viewport_slot, telemetry_slot) -> None:
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
 
+    t_now = time.perf_counter()
+    frame_age_ms = (t_now - snapshot.t_capture_start) * 1000.0 if (snapshot and snapshot.t_capture_start > 0) else 0.0
+    is_stalled = frame_age_ms > 500.0
+
     with viewport_slot.container():
         render_camera_panel_header(
             is_live=True,
             has_face=telemetry.get("has_face", True),
-            state_str=telemetry.get("drowsiness_state", "ALERT")
+            state_str=telemetry.get("drowsiness_state", "ALERT"),
+            is_stalled=is_stalled
         )
 
         render_camera_viewport(snapshot, camera_mgr)

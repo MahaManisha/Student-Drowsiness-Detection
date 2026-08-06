@@ -143,7 +143,7 @@ class HeadPoseEstimator:
         self.frame_counter += 1
 
         if landmarks is None:
-            logger.warning("Landmarks input is None; skipping head pose estimation.")
+            logger.debug("Landmarks input is None; skipping head pose estimation.")
             self.rvec = None
             self.tvec = None
             self.yaw = None

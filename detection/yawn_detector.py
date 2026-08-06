@@ -103,7 +103,7 @@ class YawnDetector:
             MouthState: OPEN if MAR >= threshold, CLOSED if MAR < threshold, or UNKNOWN if invalid.
         """
         if mar_value is None:
-            logger.warning("Mouth state classification received None for MAR. Returning UNKNOWN.")
+            logger.debug("Mouth state classification received None for MAR. Returning UNKNOWN.")
             return MouthState.UNKNOWN
 
         try:

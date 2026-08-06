@@ -41,11 +41,13 @@ def render_camera_viewport(snapshot: Any, camera_mgr: Any = None) -> float:
 
 
 
-def render_camera_panel_header(is_live: bool, has_face: bool = True, state_str: str = "ALERT") -> None:
+def render_camera_panel_header(is_live: bool, has_face: bool = True, state_str: str = "ALERT", is_stalled: bool = False) -> None:
     """
     Renders top camera panel card header with live status pill.
     """
-    if is_live:
+    if is_stalled:
+        pill_html = '<span class="status-pill pill-critical" style="font-size: 0.75rem; padding: 4px 10px; background: rgba(239, 68, 68, 0.25); color: #EF4444;">⚠️ STREAM STALLED</span>'
+    elif is_live:
         if has_face:
             pill_html = '<span class="status-pill pill-alert" style="font-size: 0.75rem; padding: 4px 10px;">● LIVE MESH LATCHED</span>'
         else:

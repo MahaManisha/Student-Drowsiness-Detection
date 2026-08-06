@@ -206,7 +206,7 @@ class TemporalEyeAnalyzer:
             self.consecutive_closed_frames = 0
         elif overall_state == EyeState.UNKNOWN:
             # Safely ignore UNKNOWN eye states: do not increment and do not reset counters
-            logger.info(
+            logger.debug(
                 f"Frame {frame_index}: EyeState is UNKNOWN. Ignoring state update for streak counters. "
                 f"Consecutive CLOSED: {self.consecutive_closed_frames}, Consecutive OPEN: {self.consecutive_open_frames}"
             )

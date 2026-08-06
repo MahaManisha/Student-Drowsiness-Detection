@@ -68,27 +68,33 @@ class CameraStream:
         self._current_fps: float = 0.0
         self._fps_timestamps: deque = deque()
 
+        # Phase 1 & 2 Frame-Progression Watchdog Counters & Timestamps
+        self.camera_read_frame_id: int = 0
+        self.queue_publish_frame_id: int = 0
+        self.last_camera_success_perf: float = time.perf_counter()
+        self.last_queue_publish_perf: float = time.perf_counter()
+        self.last_producer_stage: str = "CAMERA_IDLE"
+
     def is_available(self) -> bool:
         """
         Safely checks camera availability without creating duplicate VideoCapture
         instances if the stream is already active.
         """
         with self._lock:
-            if self.cap is not None and self.cap.isOpened():
-                return True
+            if self.cap is not None:
+                return self.cap.isOpened()
 
         if self.is_running:
-            return self.cap is not None and self.cap.isOpened()
+            return True
 
         try:
-            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
             if not temp_cap.isOpened():
-                temp_cap = cv2.VideoCapture(self.source)
+                temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
             if temp_cap.isOpened():
-                ret, _ = temp_cap.read()
                 temp_cap.release()
-                return ret
+                return True
             return False
         except Exception as e:
             logger.error(f"Error checking camera availability for source '{self.source}': {e}")
@@ -110,7 +116,13 @@ class CameraStream:
                         pass
                     self.cap = None
 
-                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+                # Backend Priority: MSMF (Media Foundation) -> DSHOW (DirectShow) -> CAP_ANY
+                self.cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
+
+                if not self.cap.isOpened():
+                    if self.cap is not None:
+                        self.cap.release()
+                    self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
                 if not self.cap.isOpened():
                     if self.cap is not None:
@@ -122,6 +134,8 @@ class CameraStream:
                     self.is_running = False
                     return False
 
+                # Startup Property Order: FOURCC -> WIDTH -> HEIGHT -> FPS -> BUFFERSIZE
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
@@ -129,7 +143,19 @@ class CameraStream:
 
                 actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                logger.info(f"[THREAD 1] Camera stream started. Resolution: {actual_w}x{actual_h}. CAP_PROP_BUFFERSIZE=1.")
+                reported_fps = self.cap.get(cv2.CAP_PROP_FPS)
+                reported_buf = self.cap.get(cv2.CAP_PROP_BUFFERSIZE)
+                backend_name = self.cap.getBackendName() if hasattr(self.cap, 'getBackendName') else 'UNKNOWN'
+
+                self.camera_info = {
+                    "backend": backend_name,
+                    "width": actual_w,
+                    "height": actual_h,
+                    "fps": reported_fps,
+                    "buffersize": reported_buf
+                }
+
+                logger.info(f"[THREAD 1] Camera stream started ({backend_name}). Res: {actual_w}x{actual_h}, Reported FPS: {reported_fps}, BUFFERSIZE: {reported_buf}.")
 
                 self.is_running = True
                 self._prev_time = time.time()
@@ -206,9 +232,11 @@ class CameraStream:
                         cap_ref = self.cap
 
                 if cap_ref is not None:
+                    self.last_producer_stage = "CAMERA_BEFORE_READ"
                     t_cap_1 = time.perf_counter()
                     ret, frame = cap_ref.read()
                     t_cap_2 = time.perf_counter()
+                    self.last_producer_stage = "CAMERA_AFTER_READ"
 
                     t2_cap = t_cap_2
                     t_end = time.time()
@@ -219,6 +247,8 @@ class CameraStream:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "OK", f"shape={frame.shape}")
                     self.consecutive_failed_reads = 0
                     self.total_frames_captured += 1
+                    self.camera_read_frame_id = frame_id
+                    self.last_camera_success_perf = t2_cap
                     now = time.time()
                     self.last_frame_timestamp = now
 
@@ -233,6 +263,7 @@ class CameraStream:
                         self._current_fps = 0.0
 
                     t1_qw = time.perf_counter()
+                    self.last_producer_stage = "CAMERA_BEFORE_PUBLISH"
                     with self._queue_lock:
                         if self._frame_queue.full():
                             try:
@@ -241,9 +272,9 @@ class CameraStream:
                                 pass
                         t2_qw = time.perf_counter()
                         meta = {
-                            "t_capture_start": t_start,
-                            "t_capture_end": t_end,
-                            "t_queue_enter": time.time(),
+                            "t_capture_start": t1_cap,
+                            "t_capture_end": t2_cap,
+                            "t_queue_enter": t2_qw,
                             "t1_cap": t1_cap,
                             "t2_cap": t2_cap,
                             "t1_qw": t1_qw,
@@ -254,6 +285,9 @@ class CameraStream:
                             "queue_len": 1
                         }
                         self._frame_queue.put_nowait((frame, meta))
+                        self.queue_publish_frame_id = frame_id
+                        self.last_queue_publish_perf = time.perf_counter()
+                        self.last_producer_stage = "CAMERA_AFTER_PUBLISH"
 
                 else:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "FAIL_RET_FALSE")
