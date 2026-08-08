@@ -194,31 +194,20 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
         unsafe_allow_html=True
     )
 
-    # 4. Head Pose & Risk Index Card
+    # 4. Drowsiness Risk Score Card
     st.markdown(
         f"""
         <div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="font-weight: 700; color: #F9FAFB; font-size: 0.85rem;">📐 Head Pose & Risk Index</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <div style="font-weight: 700; color: #F9FAFB; font-size: 0.85rem;">🛡️ Drowsiness Risk Index</div>
                 <span style="font-size: 0.7rem; color: #9CA3AF;">Confidence: <strong style="color: #38BDF8;">{conf_str}</strong></span>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr) 1.2fr; gap: 8px; margin-top: 8px; text-align: center;">
-                <div style="background: #111827; padding: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
-                    <div style="font-size: 0.65rem; color: #9CA3AF;">PITCH</div>
-                    <div class="mono-val" style="font-size: 0.9rem; font-weight: 700; color: #F9FAFB;">{pitch_str}°</div>
+            <div style="background: #111827; padding: 10px; border-radius: 8px; border: 1.5px solid {score_color}; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-size: 0.7rem; color: #9CA3AF; font-weight: 600;">ACTIVE SAFETY RISK SCORE</div>
+                    <div style="font-size: 0.75rem; color: #D1D5DB; margin-top: 2px;">Multi-Modal Signal Fusion</div>
                 </div>
-                <div style="background: #111827; padding: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
-                    <div style="font-size: 0.65rem; color: #9CA3AF;">YAW</div>
-                    <div class="mono-val" style="font-size: 0.9rem; font-weight: 700; color: #F9FAFB;">{yaw_str}°</div>
-                </div>
-                <div style="background: #111827; padding: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
-                    <div style="font-size: 0.65rem; color: #9CA3AF;">ROLL</div>
-                    <div class="mono-val" style="font-size: 0.9rem; font-weight: 700; color: #F9FAFB;">{roll_str}°</div>
-                </div>
-                <div style="background: #111827; padding: 6px; border-radius: 6px; border: 1px solid {score_color};">
-                    <div style="font-size: 0.65rem; color: #9CA3AF;">RISK SCORE</div>
-                    <div class="mono-val" style="font-size: 1.0rem; font-weight: 800; color: {score_color};">{score_str}/100</div>
-                </div>
+                <div class="mono-val" style="font-size: 1.6rem; font-weight: 800; color: {score_color};">{score_str}/100</div>
             </div>
         </div>
         """,

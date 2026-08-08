@@ -33,8 +33,15 @@ st.set_page_config(
 
 # Import dashboard components & Singleton Lifecycle Manager
 import importlib
+import dashboard.components.fast_panel as fast_panel
+import dashboard.components.head_pose_panel as head_pose_panel
 import dashboard.components.camera_panel as camera_panel
+import dashboard.components.camera_manager as camera_manager
+
+importlib.reload(fast_panel)
+importlib.reload(head_pose_panel)
 importlib.reload(camera_panel)
+importlib.reload(camera_manager)
 
 from dashboard.components.header import render_header
 from dashboard.components.sidebar import render_sidebar
@@ -229,7 +236,6 @@ def render_live_telemetry_fragment(camera_mgr) -> None:
     telemetry = snapshot.telemetry if snapshot else {}
     render_fast_telemetry_panel(telemetry)
     render_head_pose_panel(telemetry)
-    render_decision_panel(telemetry)
 
 
 def render_main_live_grid(camera_mgr) -> None:

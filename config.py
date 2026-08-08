@@ -97,8 +97,8 @@ HEAD_POSE_LANDMARK_INDICES = [4, 152, 263, 33, 291, 61]
 # ==============================================================================
 # 4. DETECTION THRESHOLDS (PLACEHOLDER VALUES)
 # ==============================================================================
-# Eye Aspect Ratio (EAR) threshold below which an eye is considered closed
-EAR_THRESHOLD = 0.25
+# Eye Aspect Ratio (EAR) threshold below which an eye is considered closed (Soukupová & Čech 2016 standard)
+EAR_THRESHOLD = 0.21
 
 # Number of consecutive frames the eye must be below EAR_THRESHOLD to trigger drowsiness
 EAR_CONSECUTIVE_FRAMES = 20
@@ -107,8 +107,8 @@ EAR_CONSECUTIVE_FRAMES = 20
 MIN_BLINK_DURATION_FRAMES = 2
 MAX_BLINK_DURATION_FRAMES = 15
 
-# Mouth Aspect Ratio (MAR) threshold above which a mouth is considered yawning
-MAR_THRESHOLD = 0.60
+# Mouth Aspect Ratio (MAR) threshold above which a mouth is considered yawning (0.25 standard)
+MAR_THRESHOLD = 0.25
 
 # Number of consecutive frames the mouth must be open to classify as a yawn
 MAR_CONSECUTIVE_FRAMES = 15

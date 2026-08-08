@@ -323,7 +323,6 @@ class DashboardCameraManager:
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_EAR]", frame_id, 0.0)
 
                     right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(face_landmarks, frame_shape=frame.shape)
-                    frame = self.eye_extractor.draw_eye_landmarks(frame, right_eye, left_eye)
                     right_ear, left_ear, avg_ear = self.ear_calculator.calculate_ear(right_eye, left_eye)
                     right_state, left_state, overall_state = self.classifier.classify_both_eyes(right_ear, left_ear)
 
@@ -340,8 +339,7 @@ class DashboardCameraManager:
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_MAR]", frame_id, 0.0)
 
                     inner_lip, outer_lip = self.mouth_extractor.extract_mouth_landmarks(face_landmarks, frame_shape=frame.shape)
-                    frame = self.mouth_extractor.draw_mouth_landmarks(frame, inner_lip, outer_lip)
-                    mar_val = self.mar_calculator.calculate_mar(inner_lip)
+                    mar_val = self.mar_calculator.calculate_mar(inner_lip, outer_lip)
 
                     t2_s5 = time.perf_counter()
                     self.last_ai_stage = "AI_AFTER_MAR"

@@ -24,14 +24,23 @@ The actual yawn classification logic and streak accumulation will be implemented
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
+import sys
+import pathlib
+
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import config
-from utils.logger import get_logger
-
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # Default configurations from central config file
-DEFAULT_MAR_THRESHOLD: float = getattr(config, "MAR_THRESHOLD", 0.60)
+DEFAULT_MAR_THRESHOLD: float = getattr(config, "MAR_THRESHOLD", 0.25)
 DEFAULT_MAR_CONSECUTIVE_FRAMES: int = getattr(config, "MAR_CONSECUTIVE_FRAMES", 15)
 
 

@@ -158,12 +158,15 @@ class FaceMeshDetector:
                 except Exception as ex:
                     ex_str = str(ex).lower()
                     if "shutdown" in ex_str or "schedule" in ex_str or "executor" in ex_str or "futures" in ex_str:
-                        logger.warning("Thread pool executor reset detected. Re-initializing Tasks API...")
-                        try:
-                            self._init_tasks_api()
-                            res = self.landmarker.detect(mp_image)
-                        except Exception as ex2:
-                            logger.error(f"Retry Tasks API detect failed: {ex2}")
+                        if not sys.is_finalizing():
+                            logger.warning("Thread pool executor reset detected. Re-initializing Tasks API...")
+                            try:
+                                self._init_tasks_api()
+                                res = self.landmarker.detect(mp_image)
+                            except Exception as ex2:
+                                logger.error(f"Retry Tasks API detect failed: {ex2}")
+                                return False, [], None
+                        else:
                             return False, [], None
                     else:
                         logger.error(f"MediaPipe Tasks API detect exception: {ex}")
@@ -252,14 +255,6 @@ class FaceMeshDetector:
                 from mediapipe.tasks.python.vision import FaceLandmarksConnections
                 lm_list = getattr(face_landmarks_proto, "landmark", None)
                 if lm_list is not None:
-                    if draw_tessellation:
-                        self.mp_drawing.draw_landmarks(
-                            image=frame,
-                            landmark_list=lm_list,
-                            connections=FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
-                            landmark_drawing_spec=None,
-                            connection_drawing_spec=self.mp_drawing_styles.get_default_face_mesh_tesselation_style(),
-                        )
                     if draw_contours:
                         self.mp_drawing.draw_landmarks(
                             image=frame,

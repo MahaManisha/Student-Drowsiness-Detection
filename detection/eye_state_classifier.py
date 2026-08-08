@@ -25,14 +25,23 @@ It does NOT perform temporal frame counting, blink detection, or multi-frame dro
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, Union
+import sys
+import pathlib
+
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import config
-from utils.logger import get_logger
-
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # Default EAR threshold fallback if config is missing or invalid
-DEFAULT_EAR_THRESHOLD: float = 0.25
+DEFAULT_EAR_THRESHOLD: float = 0.21
 
 # Realistic physiological EAR threshold bounds for human eyes
 MIN_EAR_THRESHOLD_BOUND: float = 0.05
@@ -245,16 +254,20 @@ class EyeStateClassifier:
         Returns:
             Tuple[EyeState, EyeState, EyeState]: (right_state, left_state, overall_state)
         """
-        right_state = self.classify_eye(right_ear, threshold)
-        left_state = self.classify_eye(left_ear, threshold)
+        eval_threshold = threshold if threshold is not None else self.ear_threshold
+        right_state = self.classify_eye(right_ear, eval_threshold)
+        left_state = self.classify_eye(left_ear, eval_threshold)
 
-        if right_state == EyeState.CLOSED or left_state == EyeState.CLOSED:
+        if right_ear is not None and left_ear is not None:
+            avg_ear = (right_ear + left_ear) / 2.0
+        else:
+            avg_ear = right_ear if right_ear is not None else left_ear
+
+        if avg_ear is not None:
+            overall_state = EyeState.CLOSED if avg_ear < eval_threshold else EyeState.OPEN
+        elif right_state == EyeState.CLOSED and left_state == EyeState.CLOSED:
             overall_state = EyeState.CLOSED
-        elif right_state == EyeState.OPEN and left_state == EyeState.OPEN:
-            overall_state = EyeState.OPEN
-        elif right_state == EyeState.OPEN:
-            overall_state = EyeState.OPEN
-        elif left_state == EyeState.OPEN:
+        elif right_state == EyeState.OPEN or left_state == EyeState.OPEN:
             overall_state = EyeState.OPEN
         else:
             overall_state = EyeState.UNKNOWN

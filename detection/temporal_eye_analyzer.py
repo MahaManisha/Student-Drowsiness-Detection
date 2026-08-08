@@ -24,12 +24,20 @@ from collections import deque
 from dataclasses import dataclass
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
-import numpy as np
+import sys
+import pathlib
+
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from detection.eye_state_classifier import EyeState
-from utils.logger import get_logger
-
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 @dataclass

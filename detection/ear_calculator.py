@@ -36,13 +36,23 @@ if str(ROOT_DIR) not in sys.path:
 import config
 try:
     from utils.geometry import calculate_euclidean_distance
-except ImportError:
-    if str(ROOT_DIR) not in sys.path:
-        sys.path.insert(0, str(ROOT_DIR))
-    from utils.geometry import calculate_euclidean_distance
+except Exception:
+    def calculate_euclidean_distance(p1: Any, p2: Any) -> float:
+        try:
+            x1 = getattr(p1, 'x', p1[0] if isinstance(p1, (list, tuple, np.ndarray)) else 0.0)
+            y1 = getattr(p1, 'y', p1[1] if isinstance(p1, (list, tuple, np.ndarray)) else 0.0)
+            x2 = getattr(p2, 'x', p2[0] if isinstance(p2, (list, tuple, np.ndarray)) else 0.0)
+            y2 = getattr(p2, 'y', p2[1] if isinstance(p2, (list, tuple, np.ndarray)) else 0.0)
+            return float(((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5)
+        except Exception:
+            return 0.0
+
 try:
     from utils.logger import get_logger
     logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 except Exception:
     import logging
     logger = logging.getLogger(__name__)
