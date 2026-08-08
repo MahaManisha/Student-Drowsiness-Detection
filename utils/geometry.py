@@ -12,11 +12,20 @@ It is designed to be shared across all vision detection modules, including:
 
 from typing import Any, Optional, Tuple
 import math
+import sys
+import pathlib
 import numpy as np
 
-from utils.logger import get_logger
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def _extract_point_coordinates(point: Any) -> Optional[Tuple[float, float, Optional[float]]]:

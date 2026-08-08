@@ -16,10 +16,20 @@ import numpy as np
 from collections import deque
 from typing import Optional, Tuple, Generator, Union
 
-from config import CAMERA_ID, WEBCAM_WIDTH, WEBCAM_HEIGHT, TARGET_FPS
-from utils.logger import get_logger
+import sys
+import pathlib
 
-logger = get_logger(__name__)
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from config import CAMERA_ID, WEBCAM_WIDTH, WEBCAM_HEIGHT, TARGET_FPS
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 def log_runtime_debug(thread_name: str, func_name: str, stage_marker: str, frame_id: int, elapsed_ms: float, status: str = "OK", extra: str = "") -> None:
@@ -88,9 +98,9 @@ class CameraStream:
             return True
 
         try:
-            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
+            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
             if not temp_cap.isOpened():
-                temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+                temp_cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
 
             if temp_cap.isOpened():
                 temp_cap.release()
@@ -116,13 +126,13 @@ class CameraStream:
                         pass
                     self.cap = None
 
-                # Backend Priority: MSMF (Media Foundation) -> DSHOW (DirectShow) -> CAP_ANY
-                self.cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
+                # Backend Priority: DSHOW (DirectShow - zero-latency Windows hardware backend) -> MSMF -> CAP_ANY
+                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
                 if not self.cap.isOpened():
                     if self.cap is not None:
                         self.cap.release()
-                    self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+                    self.cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
 
                 if not self.cap.isOpened():
                     if self.cap is not None:

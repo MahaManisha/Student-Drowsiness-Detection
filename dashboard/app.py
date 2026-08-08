@@ -6,20 +6,22 @@ Decoupled Multi-Rate Fragment Refresh Architecture:
 - SLOW Tier (1 Hz / 1.0s): Session Timer, Blink Count, Yawn Count, Plotly 3D Compass, Plotly Gauge, Historical Analytics, Alert Event History
 """
 
-import os
 import sys
-import time
-import datetime
 import pathlib
-import traceback
-import pandas as pd
-import streamlit as st
-from typing import Any, Optional
 
 # Add project root directory to path for clean imports
 ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+import os
+import time
+import datetime
+import traceback
+import pandas as pd
+import streamlit as st
+from collections import deque
+from typing import Any, Optional
 
 # Page configuration
 st.set_page_config(
@@ -30,6 +32,10 @@ st.set_page_config(
 )
 
 # Import dashboard components & Singleton Lifecycle Manager
+import importlib
+import dashboard.components.camera_panel as camera_panel
+importlib.reload(camera_panel)
+
 from dashboard.components.header import render_header
 from dashboard.components.sidebar import render_sidebar
 from dashboard.components.camera_panel import (
@@ -202,29 +208,50 @@ def render_live_runtime_instrumentation(snapshot: Any, t_st_image_ms: float, st_
     )
 
 
-@st.fragment(run_every="0.033s")
-def render_fast_tier(camera_mgr, viewport_slot, telemetry_slot) -> None:
+@st.fragment(run_every=0.033)
+def render_live_camera_viewport_fragment(camera_mgr) -> None:
     """
-    FAST Tier (≈30 FPS / 0.033s): Minimal Ultra-Responsive Camera Viewport & Fast Telemetry.
-    Executes EXACTLY ONE snapshot retrieval per refresh cycle and passes the SAME snapshot instance
-    to all viewport and telemetry rendering components.
+    Isolated 30 FPS Video Viewport Fragment.
+    Renders the live video feed smoothly on every cycle, guaranteeing
+    the image never freezes or sticks on a single frame.
+    """
+    snapshot = camera_mgr.get_latest_snapshot()
+    render_camera_viewport(snapshot, camera_mgr)
+
+
+@st.fragment(run_every=0.033)
+def render_live_telemetry_fragment(camera_mgr) -> None:
+    """
+    Isolated Telemetry Metrics Fragment.
+    Updates telemetry gauges & reticle orientation without re-rendering video columns.
+    """
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    render_fast_telemetry_panel(telemetry)
+    render_head_pose_panel(telemetry)
+    render_decision_panel(telemetry)
+
+
+def render_main_live_grid(camera_mgr) -> None:
+    """
+    Static Fixed Main Live Grid Layout.
+    Columns, headers, and footers are created ONCE on the main thread and NEVER torn down,
+    eliminating blinking, flickering, and column re-creation overhead completely.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
 
-    t_now = time.perf_counter()
-    frame_age_ms = (t_now - snapshot.t_capture_start) * 1000.0 if (snapshot and snapshot.t_capture_start > 0) else 0.0
-    is_stalled = frame_age_ms > 500.0
+    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
 
-    with viewport_slot.container():
+    with col_center:
         render_camera_panel_header(
             is_live=True,
             has_face=telemetry.get("has_face", True),
             state_str=telemetry.get("drowsiness_state", "ALERT"),
-            is_stalled=is_stalled
+            is_stalled=False
         )
-
-        render_camera_viewport(snapshot, camera_mgr)
+        # Isolated Viewport Fragment
+        render_live_camera_viewport_fragment(camera_mgr)
 
         render_camera_panel_footer(
             fps=telemetry.get("fps", 30.0),
@@ -232,76 +259,46 @@ def render_fast_tier(camera_mgr, viewport_slot, telemetry_slot) -> None:
             frame_id=getattr(snapshot, "frame_id", telemetry.get("frame_id"))
         )
 
-    with telemetry_slot.container():
-        render_fast_telemetry_panel(telemetry)
-
-
-@st.fragment(run_every="1.0s")
-def render_slow_tier(camera_mgr, charts_slot, analytics_slot, instrumentation_slot) -> None:
-    """
-    SLOW Tier (1 Hz / 1.0s): Unified Plotly SVG Charts, Session Analytics, and Instrumentation Panel.
-    Fetches get_latest_snapshot() EXACTLY ONCE per 1.0s cycle.
-    """
-    snapshot = camera_mgr.get_latest_snapshot()
-    telemetry = snapshot.telemetry if snapshot else {}
-
-    with charts_slot.container():
-        render_head_pose_panel(telemetry)
-        render_decision_panel(telemetry)
-
-    with analytics_slot.container():
-        if "telemetry_history" not in st.session_state:
-            st.session_state.telemetry_history = []
-
-        now_str = time.strftime("%H:%M:%S", time.localtime())
-        st.session_state.telemetry_history.append({
-            "timestamp": now_str,
-            "ear": telemetry.get("avg_ear", 0.285) if telemetry.get("avg_ear") is not None else 0.0,
-            "mar": telemetry.get("mar", 0.180) if telemetry.get("mar") is not None else 0.0,
-            "score": telemetry.get("drowsiness_score", 0.0),
-            "blinks": telemetry.get("blink_count", 0),
-            "yawns": telemetry.get("yawn_count", 0),
-            "state": telemetry.get("drowsiness_state", "ALERT")
-        })
-        if len(st.session_state.telemetry_history) > 150:
-            st.session_state.telemetry_history = st.session_state.telemetry_history[-150:]
-
-        history_df = pd.DataFrame(st.session_state.telemetry_history)
-
-        render_bottom_analytics(telemetry, camera_connected=telemetry.get("has_face", True))
-        render_analytics_dashboard(telemetry, history_df, force_chart_update=True)
-
-    with instrumentation_slot.container():
-        render_live_runtime_instrumentation(snapshot, 0.0, 30.0)
+    with col_right:
+        # Isolated Telemetry Fragment
+        render_live_telemetry_fragment(camera_mgr)
 
 
 def render_live_dashboard(camera_mgr) -> None:
     """
-    Assembles decoupled multi-rate dashboard layout using single-snapshot fragment architecture.
+    Assembles decoupled multi-rate dashboard layout.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
 
-    # Render Header (Outer Page)
+    # 1. Render Top Header Bar
     render_header(telemetry)
 
-    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
+    # 2. Render Live Viewport & Telemetry Grid (Ultra-Fast Fragment)
+    render_main_live_grid(camera_mgr)
 
-    with col_center:
-        viewport_slot = st.empty()
+    # 3. Bottom Analytics & Event History (Cached Plotly Refresh)
+    if "telemetry_history" not in st.session_state:
+        st.session_state.telemetry_history = []
 
-    with col_right:
-        telemetry_slot = st.empty()
-        charts_slot = st.empty()
+    now_str = time.strftime("%H:%M:%S", time.localtime())
+    st.session_state.telemetry_history.append({
+        "timestamp": now_str,
+        "ear": telemetry.get("avg_ear", 0.285) if telemetry.get("avg_ear") is not None else 0.0,
+        "mar": telemetry.get("mar", 0.180) if telemetry.get("mar") is not None else 0.0,
+        "score": telemetry.get("drowsiness_score", 0.0),
+        "blinks": telemetry.get("blink_count", 0),
+        "yawns": telemetry.get("yawn_count", 0),
+        "state": telemetry.get("drowsiness_state", "ALERT")
+    })
+    if len(st.session_state.telemetry_history) > 100:
+        st.session_state.telemetry_history = st.session_state.telemetry_history[-100:]
 
-    analytics_slot = st.empty()
-    instrumentation_slot = st.empty()
+    history_df = pd.DataFrame(st.session_state.telemetry_history)
 
-    # Trigger FAST Tier Fragment (30 FPS) - Single Snapshot Fetch per cycle
-    render_fast_tier(camera_mgr, viewport_slot, telemetry_slot)
-
-    # Trigger SLOW Tier Fragment (1 Hz) - Single Snapshot Fetch per cycle
-    render_slow_tier(camera_mgr, charts_slot, analytics_slot, instrumentation_slot)
+    render_bottom_analytics(telemetry, camera_connected=telemetry.get("has_face", True))
+    render_analytics_dashboard(telemetry, history_df, force_chart_update=False)
+    render_live_runtime_instrumentation(snapshot, 0.0, 30.0)
 
 
 

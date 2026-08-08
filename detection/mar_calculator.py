@@ -25,12 +25,21 @@ The actual mathematical calculations (Euclidean distance, 8-point MAR ratio) wil
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
+import sys
+import pathlib
+
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import config
 from utils.geometry import calculate_euclidean_distance
-from utils.logger import get_logger
-
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # Default MAR threshold fallback from central config (yawning threshold)
 DEFAULT_MAR_THRESHOLD: float = getattr(config, "MAR_THRESHOLD", 0.60)

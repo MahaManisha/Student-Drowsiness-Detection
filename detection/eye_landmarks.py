@@ -19,10 +19,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
-import config
-from utils.logger import get_logger
+import sys
+import pathlib
 
-logger = get_logger(__name__)
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+import config
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # MEDIAPIPE FACE MESH EYE LANDMARK INDICES (6-POINT EAR STANDARD)

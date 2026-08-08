@@ -45,8 +45,33 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
     col_gauge, col_meta = st.columns([1.2, 1.0])
 
     with col_gauge:
-        fig_gauge = render_drowsiness_gauge(score_val)
-        st.plotly_chart(fig_gauge, use_container_width=True, config={'displayModeBar': False})
+        val = min(100.0, max(0.0, float(score_val)))
+        if val < 25:
+            bar_color = "#10B981"
+        elif val < 50:
+            bar_color = "#F59E0B"
+        elif val < 75:
+            bar_color = "#F97316"
+        else:
+            bar_color = "#EF4444"
+
+        pct_dash = (val / 100.0) * 251.3
+        st.markdown(
+            f"""
+            <div style="position: relative; width: 120px; height: 120px; margin: 0 auto;">
+                <svg width="120" height="120" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="40" stroke="#111827" stroke-width="9" fill="none"/>
+                    <circle cx="50" cy="50" r="40" stroke="{bar_color}" stroke-width="9" fill="none"
+                            stroke-dasharray="{pct_dash:.1f} 251.3" stroke-dashoffset="0" transform="rotate(-90 50 50)" stroke-linecap="round"/>
+                </svg>
+                <div style="position: absolute; top: 0; left: 0; width: 120px; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                    <div style="font-family: 'JetBrains Mono', monospace; font-size: 1.3rem; font-weight: 800; color: #F9FAFB;">{score_val:.0f}<span style="font-size: 0.8rem; color: #9CA3AF;">/100</span></div>
+                    <div style="font-size: 0.6rem; color: #9CA3AF; font-weight: 700; text-transform: uppercase;">RISK SCORE</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     with col_meta:
         st.markdown('<div style="margin-top: 10px;"></div>', unsafe_allow_html=True)

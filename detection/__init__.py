@@ -1,4 +1,11 @@
 # Detection Module Package
+import sys
+import pathlib
+
+ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from detection.face_mesh import FaceMeshDetector, RIGHT_EYE_LANDMARKS, LEFT_EYE_LANDMARKS, INNER_LIPS_LANDMARKS, OUTER_LIPS_LANDMARKS
 from detection.eye_landmarks import EyeLandmarkExtractor
 from detection.ear_calculator import EARCalculator

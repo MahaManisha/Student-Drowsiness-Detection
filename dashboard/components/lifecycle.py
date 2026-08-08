@@ -19,10 +19,18 @@ import threading
 import streamlit as st
 from typing import Dict, Any, Optional
 
-from utils.logger import get_logger
-from dashboard.components.camera_manager import DashboardCameraManager
+ROOT_DIR = pathlib.Path(__file__).parent.parent.parent.resolve()
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-logger = get_logger(__name__)
+try:
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+except Exception:
+    import logging
+    logger = logging.getLogger(__name__)
+
+from dashboard.components.camera_manager import DashboardCameraManager
 
 # Module-level global singleton registry instance
 _GLOBAL_CAMERA_MANAGER_SINGLETON: Optional[DashboardCameraManager] = None
@@ -53,6 +61,12 @@ def get_singleton_camera_manager() -> DashboardCameraManager:
         logger.info("[SINGLETON LIFECYCLE] Instantiating authoritative Singleton DashboardCameraManager...")
         mgr = DashboardCameraManager()
         mgr.start()
+
+        try:
+            from dashboard.components.mjpeg_server import start_mjpeg_stream_server
+            start_mjpeg_stream_server(mgr, port=8089)
+        except Exception as e:
+            logger.warning(f"[MJPEG SERVER] Could not start MJPEG server: {e}")
 
         _GLOBAL_CAMERA_MANAGER_SINGLETON = mgr
         st.session_state.global_camera_manager_singleton = mgr

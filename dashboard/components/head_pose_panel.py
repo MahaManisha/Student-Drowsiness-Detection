@@ -25,34 +25,13 @@ def render_head_pose_panel(raw_telemetry: Dict[str, Any]) -> None:
     yaw_str = safe_angle(yaw, precision=1, default="N/A")
     roll_str = safe_angle(roll, precision=1, default="N/A")
 
-    # Plotly 2D Reticle Compass setup
+    # Ultra-Fast High-Performance Inline SVG Reticle Compass (0ms serialization, zero browser freezes)
     p_val = pitch if pitch is not None else 0.0
     y_val = yaw if yaw is not None else 0.0
 
-    fig = go.Figure()
-    fig.add_shape(type="circle", x0=-30, y0=-30, x1=30, y1=30, line=dict(color="#374151", width=1.5))
-    fig.add_shape(type="line", x0=-30, y0=0, x1=30, y1=0, line=dict(color="#4B5563", width=1, dash="dash"))
-    fig.add_shape(type="line", x0=0, y0=-30, x1=0, y1=30, line=dict(color="#4B5563", width=1, dash="dash"))
-
     reticle_color = "#10B981" if is_valid and (abs(p_val) <= 15 and abs(y_val) <= 15) else "#EF4444"
-    fig.add_trace(go.Scatter(
-        x=[y_val],
-        y=[p_val],
-        mode="markers",
-        marker=dict(size=12, color=reticle_color, line=dict(width=2, color="#F9FAFB")),
-        hoverinfo="text",
-        text=f"Pitch: {pitch_str}, Yaw: {yaw_str}"
-    ))
-
-    fig.update_layout(
-        xaxis=dict(range=[-35, 35], showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(range=[-35, 35], showgrid=False, zeroline=False, showticklabels=False),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=0, b=0),
-        width=140,
-        height=140
-    )
+    cx = 50 + int(max(-35.0, min(35.0, y_val)) / 35.0 * 35.0)
+    cy = 50 - int(max(-35.0, min(35.0, p_val)) / 35.0 * 35.0)
 
     st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
@@ -70,7 +49,19 @@ def render_head_pose_panel(raw_telemetry: Dict[str, Any]) -> None:
     col_compass, col_metrics = st.columns([1, 1])
 
     with col_compass:
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.markdown(
+            f"""
+            <div style="text-align: center; padding: 4px 0;">
+                <svg width="120" height="120" viewBox="0 0 100 100" style="background: transparent;">
+                    <circle cx="50" cy="50" r="40" stroke="rgba(255,255,255,0.12)" stroke-width="1.5" fill="none"/>
+                    <line x1="10" y1="50" x2="90" y2="50" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="3,3"/>
+                    <line x1="50" y1="10" x2="50" y2="90" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="3,3"/>
+                    <circle cx="{cx}" cy="{cy}" r="6" fill="{reticle_color}" stroke="#F9FAFB" stroke-width="2"/>
+                </svg>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     with col_metrics:
         st.markdown(
