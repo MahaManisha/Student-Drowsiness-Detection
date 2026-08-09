@@ -2,23 +2,30 @@
 Student Drowsiness Detection System - Main Streamlit Dashboard Entry Point
 
 Decoupled Multi-Rate Fragment Refresh Architecture:
-- FAST Tier (30 FPS / 0.033s): Camera Image, Alert Banner, Eye State, Mouth State, EAR, MAR, Head Pose degrees, Drowsiness Risk Score
-- SLOW Tier (1 Hz / 1.0s): Session Timer, Blink Count, Yawn Count, Plotly 3D Compass, Plotly Gauge, Historical Analytics, Alert Event History
+- FAST Tier (0.1s / 10 FPS): Telemetry metrics (EAR, MAR, Head Pose, Risk Score, XAI Decision Panel)
+- FRAME/CAMERA Tier (0.2s / 5 FPS): Camera status header, Frame ID badge, FPS counter
+- SLOW Tier (1.0s / 1 Hz): Header Session Timer, Bottom Analytics, Plotly Charts, Session History, Runtime Instrumentation
 """
 
 import sys
 import pathlib
 
-# Add project root directory to path for clean imports
+# Add project root directory to path for clean imports & prevent shadowing of root utils
 ROOT_DIR = pathlib.Path(__file__).parent.parent.resolve()
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+DASHBOARD_DIR = pathlib.Path(__file__).parent.resolve()
+
+if str(DASHBOARD_DIR) in sys.path:
+    sys.path.remove(str(DASHBOARD_DIR))
+if str(ROOT_DIR) in sys.path:
+    sys.path.remove(str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
 
 import os
 import time
 import datetime
 import traceback
 import pandas as pd
+import textwrap
 import streamlit as st
 from collections import deque
 from typing import Any, Optional
@@ -61,7 +68,6 @@ from dashboard.components.lifecycle import (
     print_singleton_health_log,
 )
 from utils.logger import get_logger
-from dashboard.utils.mock_data import MockTelemetryProvider
 
 logger = get_logger(__name__)
 
@@ -94,7 +100,6 @@ def render_live_runtime_instrumentation(snapshot: Any, t_st_image_ms: float, st_
         st_render_fps = round((len(st.session_state.ui_fps_timestamps) - 1) / elapsed_ui, 1) if elapsed_ui > 0 else 30.0
     else:
         st_render_fps = 30.0
-    browser_fps = st_render_fps
 
     queue_len = live_perf.get("queue_len", 0)
     latest_frame_id = live_perf.get("latest_frame_id", 0)
@@ -134,164 +139,134 @@ def render_live_runtime_instrumentation(snapshot: Any, t_st_image_ms: float, st_
         font_weight = "bold" if is_slowest else "normal"
         badge = ' <span style="background:#EF4444; color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem;">SLOWEST STAGE</span>' if is_slowest else ""
 
-        rows_html += f"""
-        <tr style="background-color: {row_bg}; color: {text_color}; font-weight: {font_weight};">
-            <td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">{name}{badge}</td>
-            <td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: right;">{duration_ms:.2f} ms</td>
-            <td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: right; font-size:0.75rem; color:#9CA3AF;">{location}</td>
-        </tr>
-        """
+        rows_html += f'<tr style="background-color: {row_bg}; color: {text_color}; font-weight: {font_weight};"><td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">{name}{badge}</td><td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: right;">{duration_ms:.2f} ms</td><td style="padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: right; font-size:0.75rem; color:#9CA3AF;">{location}</td></tr>'
 
     bottleneck_msg = f"<strong>FPS Collapse Bottleneck Identified:</strong> {slowest_name} takes <strong>{slowest_ms:.1f} ms</strong> per frame, capping real-time UI refresh at <strong>{st_render_fps} FPS</strong> (File: {slowest_loc})."
 
     st.markdown(
-        f"""
-        <div style="background: #1F2937; border: 1px solid #374151; border-radius: 10px; padding: 14px; margin-top: 12px; font-family: monospace;">
-            <div style="font-size: 1.0rem; font-weight: bold; color: #F59E0B; margin-bottom: 10px; border-bottom: 1px solid #374151; padding-bottom: 6px;">
-                ⚡ LIVE REAL-TIME RUNTIME PERFORMANCE INSTRUMENTATION
-            </div>
-            
-            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Camera FPS</div>
-                    <div style="font-size:1.1rem; font-weight:bold; color:#10B981;">{cam_fps:.1f}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Producer FPS</div>
-                    <div style="font-size:1.1rem; font-weight:bold; color:#10B981;">{prod_fps:.1f}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">AI Worker FPS</div>
-                    <div style="font-size:1.1rem; font-weight:bold; color:#38BDF8;">{ai_fps:.1f}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Streamlit Render FPS</div>
-                    <div style="font-size:1.1rem; font-weight:bold; color:#EF4444;">{st_render_fps:.1f}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Browser Display FPS</div>
-                    <div style="font-size:0.9rem; font-weight:bold; color:#9CA3AF;">N/A (unmeasured)</div>
-                </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Queue Length</div>
-                    <div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">{queue_len}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Latest AI Frame ID</div>
-                    <div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">#{latest_frame_id}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Displayed Frame ID</div>
-                    <div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">#{displayed_frame_id}</div>
-                </div>
-                <div style="background:#111827; padding:6px; border-radius:6px;">
-                    <div style="font-size:0.7rem; color:#9CA3AF;">Processing Time/Frame</div>
-                    <div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">{proc_time_ms:.1f} ms</div>
-                </div>
-            </div>
-
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 10px;">
-                <thead>
-                    <tr style="border-bottom: 2px solid #374151; color: #9CA3AF; text-align: left;">
-                        <th style="padding: 4px 8px;">Pipeline Stage</th>
-                        <th style="padding: 4px 8px; text-align: right;">Measured Time</th>
-                        <th style="padding: 4px 8px; text-align: right;">Source File & Location</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
-
-            <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid #EF4444; border-radius: 6px; padding: 8px; font-size: 0.85rem; color: #FCA5A5;">
-                {bottleneck_msg}
-            </div>
-        </div>
-        """,
+        f'<div style="background: #1F2937; border: 1px solid #374151; border-radius: 10px; padding: 14px; margin-top: 12px; font-family: monospace;">'
+        f'<div style="font-size: 1.0rem; font-weight: bold; color: #F59E0B; margin-bottom: 10px; border-bottom: 1px solid #374151; padding-bottom: 6px;">⚡ LIVE REAL-TIME RUNTIME PERFORMANCE INSTRUMENTATION</div>'
+        f'<div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Camera FPS</div><div style="font-size:1.1rem; font-weight:bold; color:#10B981;">{cam_fps:.1f}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Producer FPS</div><div style="font-size:1.1rem; font-weight:bold; color:#10B981;">{prod_fps:.1f}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">AI Worker FPS</div><div style="font-size:1.1rem; font-weight:bold; color:#38BDF8;">{ai_fps:.1f}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Streamlit Render FPS</div><div style="font-size:1.1rem; font-weight:bold; color:#EF4444;">{st_render_fps:.1f}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Browser Display FPS</div><div style="font-size:0.9rem; font-weight:bold; color:#9CA3AF;">N/A (unmeasured)</div></div>'
+        f'</div>'
+        f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Queue Length</div><div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">{queue_len}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Latest AI Frame ID</div><div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">#{latest_frame_id}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Displayed Frame ID</div><div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">#{displayed_frame_id}</div></div>'
+        f'<div style="background:#111827; padding:6px; border-radius:6px;"><div style="font-size:0.7rem; color:#9CA3AF;">Processing Time/Frame</div><div style="font-size:1.0rem; font-weight:bold; color:#F59E0B;">{proc_time_ms:.1f} ms</div></div>'
+        f'</div>'
+        f'<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 10px;">'
+        f'<thead><tr style="border-bottom: 2px solid #374151; color: #9CA3AF; text-align: left;"><th style="padding: 4px 8px;">Pipeline Stage</th><th style="padding: 4px 8px; text-align: right;">Measured Time</th><th style="padding: 4px 8px; text-align: right;">Source File & Location</th></tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+        f'<div style="background: rgba(239, 68, 68, 0.15); border: 1px solid #EF4444; border-radius: 6px; padding: 8px; font-size: 0.85rem; color: #FCA5A5;">{bottleneck_msg}</div>'
+        f'</div>',
         unsafe_allow_html=True
     )
 
 
-@st.fragment(run_every=0.033)
+# ==============================================================================
+# MULTI-RATE FRAGMENT REFRESH ARCHITECTURE
+# ==============================================================================
+
+@st.fragment(run_every=1.0)
+def render_header_fragment(camera_mgr) -> None:
+    """SLOW TIER (1.0s): Top Header Bar (Session Timer, System Status)."""
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    render_header(telemetry)
+
+
+@st.fragment(run_every=0.2)
+def render_camera_header_fragment(camera_mgr) -> None:
+    """FRAME/STATUS TIER (0.2s): Camera Panel Header Status Pill."""
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    has_face = bool(
+        telemetry.get("has_face", False)
+        or telemetry.get("avg_ear") is not None
+        or telemetry.get("mar") is not None
+        or telemetry.get("head_pose_valid", False)
+    )
+    render_camera_panel_header(
+        is_live=True,
+        has_face=has_face,
+        state_str=telemetry.get("drowsiness_state", "ALERT"),
+        is_stalled=False
+    )
+
+
 def render_live_camera_viewport_fragment(camera_mgr) -> None:
-    """
-    Isolated 30 FPS Video Viewport Fragment.
-    Renders the live video feed smoothly on every cycle, guaranteeing
-    the image never freezes or sticks on a single frame.
-    """
+    """Isolated Video Viewport (MJPEG streams natively in browser HTML5 image tag)."""
     snapshot = camera_mgr.get_latest_snapshot()
     render_camera_viewport(snapshot, camera_mgr)
 
 
-@st.fragment(run_every=0.033)
-def render_live_telemetry_fragment(camera_mgr) -> None:
+@st.fragment(run_every=0.2)
+def render_camera_footer_fragment(camera_mgr) -> None:
+    """FRAME/STATUS TIER (0.2s): Camera Panel Footer Frame ID & FPS Badge."""
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
+    render_camera_panel_footer(
+        fps=telemetry.get("fps", 30.0),
+        resolution="1280x720",
+        frame_id=frame_id
+    )
+
+
+@st.fragment(run_every=0.1)
+def render_fast_telemetry_fragment(camera_mgr) -> None:
     """
-    Isolated Telemetry Metrics Fragment.
-    Updates telemetry gauges & reticle orientation without re-rendering video columns.
+    FAST TIER (0.1s / 100ms):
+    Ocular (EAR), Oral (MAR), Head Pose (Pitch/Yaw/Roll), Risk Score,
+    Confidence, Alert Banner, and XAI Decision Engine.
+    Queries camera_mgr.get_latest_snapshot() on every execution body.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
+
+    # Debug Logging to prove dynamic snapshot consumption & telemetry validity
+    frame_id = getattr(snapshot, "frame_id", 0)
+    if "last_logged_ui_frame" not in st.session_state or st.session_state.last_logged_ui_frame != frame_id:
+        if frame_id % 15 == 0 and frame_id > 0:
+            logger.info(
+                f"[REAL-SNAPSHOT] frame_id={frame_id} success={getattr(snapshot, 'success', False)} timestamp={getattr(snapshot, 'timestamp', 0):.3f} "
+                f"avg_ear={telemetry.get('avg_ear')} left_ear={telemetry.get('left_ear')} right_ear={telemetry.get('right_ear')} "
+                f"eye_state={telemetry.get('eye_state')} mar={telemetry.get('mar')} mouth_state={telemetry.get('mouth_state')} "
+                f"pitch={telemetry.get('head_pose_pitch')} yaw={telemetry.get('head_pose_yaw')} roll={telemetry.get('head_pose_roll')} "
+                f"head_pose_valid={telemetry.get('head_pose_valid')} risk={telemetry.get('drowsiness_score')} "
+                f"drowsiness_state={telemetry.get('drowsiness_state')} confidence={telemetry.get('decision_confidence')}"
+            )
+        st.session_state.last_logged_ui_frame = frame_id
+
     render_fast_telemetry_panel(telemetry)
     render_head_pose_panel(telemetry)
+    render_decision_panel(telemetry)
 
 
-def render_main_live_grid(camera_mgr) -> None:
+@st.fragment(run_every=1.0)
+def render_slow_analytics_fragment(camera_mgr) -> None:
     """
-    Static Fixed Main Live Grid Layout.
-    Columns, headers, and footers are created ONCE on the main thread and NEVER torn down,
-    eliminating blinking, flickering, and column re-creation overhead completely.
-    """
-    snapshot = camera_mgr.get_latest_snapshot()
-    telemetry = snapshot.telemetry if snapshot else {}
-
-    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
-
-    with col_center:
-        render_camera_panel_header(
-            is_live=True,
-            has_face=telemetry.get("has_face", True),
-            state_str=telemetry.get("drowsiness_state", "ALERT"),
-            is_stalled=False
-        )
-        # Isolated Viewport Fragment
-        render_live_camera_viewport_fragment(camera_mgr)
-
-        render_camera_panel_footer(
-            fps=telemetry.get("fps", 30.0),
-            resolution="1280x720",
-            frame_id=getattr(snapshot, "frame_id", telemetry.get("frame_id"))
-        )
-
-    with col_right:
-        # Isolated Telemetry Fragment
-        render_live_telemetry_fragment(camera_mgr)
-
-
-def render_live_dashboard(camera_mgr) -> None:
-    """
-    Assembles decoupled multi-rate dashboard layout.
+    SLOW TIER (1.0s / 1 Hz):
+    Bottom Analytics, Plotly Charts, Telemetry History Appending,
+    and Live Runtime Instrumentation.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
 
-    # 1. Render Top Header Bar
-    render_header(telemetry)
-
-    # 2. Render Live Viewport & Telemetry Grid (Ultra-Fast Fragment)
-    render_main_live_grid(camera_mgr)
-
-    # 3. Bottom Analytics & Event History (Cached Plotly Refresh)
     if "telemetry_history" not in st.session_state:
         st.session_state.telemetry_history = []
 
     now_str = time.strftime("%H:%M:%S", time.localtime())
     st.session_state.telemetry_history.append({
         "timestamp": now_str,
-        "ear": telemetry.get("avg_ear", 0.285) if telemetry.get("avg_ear") is not None else 0.0,
-        "mar": telemetry.get("mar", 0.180) if telemetry.get("mar") is not None else 0.0,
+        "ear": telemetry.get("avg_ear", 0.0) if telemetry.get("avg_ear") is not None else 0.0,
+        "mar": telemetry.get("mar", 0.0) if telemetry.get("mar") is not None else 0.0,
         "score": telemetry.get("drowsiness_score", 0.0),
         "blinks": telemetry.get("blink_count", 0),
         "yawns": telemetry.get("yawn_count", 0),
@@ -306,6 +281,33 @@ def render_live_dashboard(camera_mgr) -> None:
     render_analytics_dashboard(telemetry, history_df, force_chart_update=False)
     render_live_runtime_instrumentation(snapshot, 0.0, 30.0)
 
+
+def render_live_dashboard(camera_mgr) -> None:
+    """
+    Assembles multi-rate live dashboard layout using reactive Streamlit fragments.
+    """
+    # 1. Top Header Bar Fragment (1.0s)
+    render_header_fragment(camera_mgr)
+
+    # 2. Main Live Viewport & Telemetry Grid
+    col_center, col_right = st.columns([1.8, 1.2], gap="medium")
+
+    with col_center:
+        # Camera Header Fragment (200ms)
+        render_camera_header_fragment(camera_mgr)
+
+        # Isolated Viewport Fragment (33ms)
+        render_live_camera_viewport_fragment(camera_mgr)
+
+        # Camera Footer Fragment (200ms)
+        render_camera_footer_fragment(camera_mgr)
+
+    with col_right:
+        # Fast Telemetry & Decision Panel Fragment (100ms)
+        render_fast_telemetry_fragment(camera_mgr)
+
+    # 3. Bottom Analytics & Instrumentation Fragment (1.0s)
+    render_slow_analytics_fragment(camera_mgr)
 
 
 def main() -> None:

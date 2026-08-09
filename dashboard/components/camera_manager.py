@@ -146,7 +146,7 @@ class DashboardCameraManager:
 
         self.camera = CameraStream()
 
-        self.detector = FaceMeshDetector()
+        self.detector = FaceMeshDetector(min_detection_confidence=0.3, min_tracking_confidence=0.3)
         self.eye_extractor = EyeLandmarkExtractor()
         self.mouth_extractor = MouthLandmarkExtractor()
         self.ear_calculator = EARCalculator()
@@ -178,6 +178,19 @@ class DashboardCameraManager:
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_telemetry: Dict[str, Any] = self._get_fallback_telemetry()
         self._latest_snapshot: Optional[FrameSnapshot] = None
+
+        # Tracking state to smooth out single-frame MediaPipe detection drops
+        self._last_valid_avg_ear: Optional[float] = None
+        self._last_valid_left_ear: Optional[float] = None
+        self._last_valid_right_ear: Optional[float] = None
+        self._last_valid_mar: Optional[float] = None
+        self._last_valid_pitch: float = 0.0
+        self._last_valid_yaw: float = 0.0
+        self._last_valid_roll: float = 0.0
+        self._last_valid_eye_state: EyeState = EyeState.UNKNOWN
+        self._last_valid_mouth_state: str = "CLOSED"
+        self._last_valid_pose_valid: bool = False
+        self._last_valid_face_frame_id: int = 0
         self._current_ai_fps: float = 0.0
         self._ai_fps_timestamps: deque = deque()
 
@@ -244,13 +257,6 @@ class DashboardCameraManager:
             if not ret or frame is None:
                 time.sleep(0.005)
                 continue
-
-            # Performance Optimization: Downscale HD frames to 480px width before MediaPipe & HUD drawing
-            # Reduces CPU tensor operations & drawing latency by 85% (6x speedup)
-            fh, fw = frame.shape[:2]
-            if fw > 480:
-                target_h = int(fh * (480.0 / fw))
-                frame = cv2.resize(frame, (480, target_h), interpolation=cv2.INTER_LINEAR)
 
             t_ai_start_perf = time.perf_counter()
             t_ai_start = time.time()
@@ -381,6 +387,36 @@ class DashboardCameraManager:
                 if pose_result and pose_result.valid:
                     pitch, yaw, roll = pose_result.pitch, pose_result.yaw, pose_result.roll
                     pose_valid = True
+
+                if has_face and all_landmarks:
+                    if avg_ear is not None:
+                        self._last_valid_avg_ear = avg_ear
+                        self._last_valid_left_ear = left_ear
+                        self._last_valid_right_ear = right_ear
+                        self._last_valid_eye_state = overall_state
+                    if mar_val is not None:
+                        self._last_valid_mar = mar_val
+                        self._last_valid_mouth_state = mouth_state_str
+                    if pose_valid:
+                        self._last_valid_pitch = pitch
+                        self._last_valid_yaw = yaw
+                        self._last_valid_roll = roll
+                        self._last_valid_pose_valid = pose_valid
+                    self._last_valid_face_frame_id = frame_id
+                    self._last_valid_face_time = time.time()
+                elif getattr(self, "_last_valid_face_time", 0) > 0 and (time.time() - self._last_valid_face_time) <= 3.0:
+                    # Smooth out MediaPipe detection drops (up to 3.0s grace period)
+                    has_face = True
+                    avg_ear = self._last_valid_avg_ear
+                    left_ear = self._last_valid_left_ear
+                    right_ear = self._last_valid_right_ear
+                    overall_state = self._last_valid_eye_state if self._last_valid_eye_state != EyeState.UNKNOWN else overall_state
+                    mar_val = self._last_valid_mar
+                    mouth_state_str = self._last_valid_mouth_state
+                    pitch = self._last_valid_pitch
+                    yaw = self._last_valid_yaw
+                    roll = self._last_valid_roll
+                    pose_valid = self._last_valid_pose_valid
 
                 t2_s8 = time.perf_counter()
                 self.last_ai_stage = "AI_AFTER_HEADPOSE"
@@ -644,6 +680,14 @@ class DashboardCameraManager:
                 t2_s11 = time.perf_counter()
                 s11_telemetry_dict_ms = (t2_s11 - t1_s11) * 1000.0
                 telemetry["ai_13_stages"]["12_telemetry_creation"] = s11_telemetry_dict_ms
+
+                if frame_id % 15 == 0 and frame_id > 0:
+                    logger.info(
+                        f"[AI-WORKER-OUTPUT] frame_id={frame_id} has_face={has_face} avg_ear={avg_ear} mar={mar_val} "
+                        f"eye_state={overall_state.value if hasattr(overall_state, 'value') else str(overall_state)} "
+                        f"mouth_state={mouth_state_str} head_pose_valid={pose_valid} pitch={pitch:.1f} yaw={yaw:.1f} roll={roll:.1f} "
+                        f"risk={score_val:.1f} confidence={(decision_metrics.get('intermediate_decision') or {}).get('confidence_score', 0.98) * 100.0:.1f}"
+                    )
 
                 # Construct Immutable Single-Frame Snapshot Payload
                 snapshot = FrameSnapshot(

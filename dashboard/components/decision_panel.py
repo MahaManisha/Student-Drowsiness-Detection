@@ -5,6 +5,7 @@ Renders 2D circular score gauge, confidence meter, 4-grid signal matrix, and pri
 Integrates type-safe telemetry formatters to prevent numeric formatting crashes.
 """
 
+import textwrap
 import streamlit as st
 from typing import Dict, Any
 from dashboard.components.gauge_component import render_drowsiness_gauge
@@ -23,7 +24,13 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
     state = raw_telemetry.get("drowsiness_state", "ALERT")
     co_occurrences = raw_telemetry.get("co_occurrences", {"EYE": False, "MOUTH": False, "POSE": False})
     reason_str = raw_telemetry.get("decision_reason", "Student alert. All metrics within nominal bounds.")
-    has_face = raw_telemetry.get("has_face", True)
+    raw_has_face = raw_telemetry.get("has_face", False)
+    has_face = bool(
+        raw_has_face
+        or raw_telemetry.get("avg_ear") is not None
+        or raw_telemetry.get("mar") is not None
+        or raw_telemetry.get("head_pose_valid", False)
+    )
 
     score_val = score if score is not None else 0.0
     conf_val = confidence if confidence is not None else 0.0
@@ -33,12 +40,12 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
 
     st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
-        """
+        textwrap.dedent("""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem;">🧠 AI Decision Engine (XAI)</div>
             <span style="font-size: 0.7rem; color: #9CA3AF; font-weight: 700;">Multi-Modal Evaluator</span>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -57,7 +64,7 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
 
         pct_dash = (val / 100.0) * 251.3
         st.markdown(
-            f"""
+            textwrap.dedent(f"""
             <div style="position: relative; width: 120px; height: 120px; margin: 0 auto;">
                 <svg width="120" height="120" viewBox="0 0 100 100">
                     <circle cx="50" cy="50" r="40" stroke="#111827" stroke-width="9" fill="none"/>
@@ -69,7 +76,7 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
                     <div style="font-size: 0.6rem; color: #9CA3AF; font-weight: 700; text-transform: uppercase;">RISK SCORE</div>
                 </div>
             </div>
-            """,
+            """),
             unsafe_allow_html=True
         )
 
@@ -85,11 +92,11 @@ def render_decision_panel(raw_telemetry: Dict[str, Any]) -> None:
     # Primary Decision Explanation Box
     display_reason = reason_str if has_face else "Searching for Face..."
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="background-color: #111827; border-left: 3px solid #38BDF8; border-radius: 6px; padding: 10px 12px; margin-top: 8px; font-size: 0.8rem; color: #D1D5DB; line-height: 1.4;">
             <strong style="color: #38BDF8;">Primary Reason:</strong> {display_reason}
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
     st.markdown('</div>', unsafe_allow_html=True)

@@ -45,19 +45,12 @@ def get_singleton_camera_manager() -> DashboardCameraManager:
     """
     global _GLOBAL_CAMERA_MANAGER_SINGLETON
 
-    # 1. Check Streamlit session_state first
-    if "global_camera_manager_singleton" in st.session_state and st.session_state.global_camera_manager_singleton is not None:
-        mgr = st.session_state.global_camera_manager_singleton
-        _GLOBAL_CAMERA_MANAGER_SINGLETON = mgr
-        return mgr
-
-    # 2. Check module-level global singleton reference
     with _SINGLETON_LOCK:
-        if _GLOBAL_CAMERA_MANAGER_SINGLETON is not None:
+        if _GLOBAL_CAMERA_MANAGER_SINGLETON is not None and getattr(_GLOBAL_CAMERA_MANAGER_SINGLETON, "is_connected", False):
             st.session_state.global_camera_manager_singleton = _GLOBAL_CAMERA_MANAGER_SINGLETON
             return _GLOBAL_CAMERA_MANAGER_SINGLETON
 
-        # 3. First-time instantiation of Singleton Camera Manager
+        # First-time or fresh instantiation of Singleton Camera Manager
         logger.info("[SINGLETON LIFECYCLE] Instantiating authoritative Singleton DashboardCameraManager...")
         mgr = DashboardCameraManager()
         mgr.start()

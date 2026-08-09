@@ -5,6 +5,7 @@ Renders a scrollable chronological alert history event stream displaying histori
 Safely supports both dictionary event objects and string log messages.
 """
 
+import textwrap
 import streamlit as st
 from typing import Dict, Any, List, Union
 
@@ -15,12 +16,12 @@ def render_alert_history(events: List[Union[Dict[str, Any], str]]) -> None:
     """
     st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
-        """
+        textwrap.dedent("""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <div style="font-weight: 700; color: #F9FAFB; font-size: 0.95rem;">📜 Alert Event History</div>
             <span style="font-size: 0.7rem; color: #9CA3AF;">Newest First</span>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -51,7 +52,7 @@ def render_alert_history(events: List[Union[Dict[str, Any], str]]) -> None:
                 details = ""
 
             st.markdown(
-                f"""
+                textwrap.dedent(f"""
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); padding: 6px 0;">
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <span>{icon}</span>
@@ -62,7 +63,7 @@ def render_alert_history(events: List[Union[Dict[str, Any], str]]) -> None:
                     </div>
                     <span class="mono-val" style="color: #9CA3AF; font-size: 0.7rem;">[{ev_time}]</span>
                 </div>
-                """,
+                """),
                 unsafe_allow_html=True
             )
         st.markdown('</div>', unsafe_allow_html=True)

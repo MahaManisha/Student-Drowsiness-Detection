@@ -18,7 +18,8 @@ def render_head_pose_panel(raw_telemetry: Dict[str, Any]) -> None:
     pitch = raw_telemetry.get("head_pose_pitch")
     yaw = raw_telemetry.get("head_pose_yaw")
     roll = raw_telemetry.get("head_pose_roll")
-    is_valid = raw_telemetry.get("head_pose_valid", False)
+    raw_valid = raw_telemetry.get("head_pose_valid", False)
+    is_valid = bool(raw_valid or raw_telemetry.get("has_face", False) or pitch is not None)
 
     # Safe Formatted Degree Strings
     pitch_str = safe_angle(pitch, precision=1, default="N/A")

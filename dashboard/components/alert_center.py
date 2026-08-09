@@ -7,6 +7,7 @@ Integrates safe telemetry formatting utilities to prevent TypeError exceptions.
 """
 
 import time
+import textwrap
 import streamlit as st
 from typing import Dict, Any
 from dashboard.components.alert_badge import get_alert_badge_style
@@ -48,7 +49,7 @@ def render_alert_center(raw_telemetry: Dict[str, Any]) -> None:
 
     st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem;">🚨 Real-Time Alert Center</div>
             <div style="display: flex; gap: 8px; align-items: center;">
@@ -69,7 +70,7 @@ def render_alert_center(raw_telemetry: Dict[str, Any]) -> None:
                 Alert Duration: <strong class="mono-val" style="color: #F9FAFB;">{closed_dur_str}</strong> | Severity: <strong style="color: {border_color}; text-transform: uppercase;">{severity}</strong>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
     st.markdown('</div>', unsafe_allow_html=True)

@@ -27,6 +27,7 @@ except Exception:
 
 
 import base64
+import textwrap
 from PIL import Image
 import time
 
@@ -76,14 +77,14 @@ def render_camera_panel_header(is_live: bool, has_face: bool = True, state_str: 
         pill_html = '<span class="status-pill pill-critical" style="font-size: 0.75rem; padding: 4px 10px;">⚠️ CAMERA OFFLINE</span>'
 
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem; display: flex; align-items: center; gap: 8px;">
                 <span>📹</span> Live Viewport Stream
             </div>
             {pill_html}
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -94,14 +95,14 @@ def render_camera_panel_footer(fps: float, resolution: str = "1280x720", frame_i
     """
     frame_str = f"#{frame_id}" if frame_id is not None and frame_id > 0 else "#--"
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #9CA3AF; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px;">
             <span>Frame: <strong style="color: #F59E0B;">{frame_str}</strong></span>
             <span>Resolution: <strong style="color: #F9FAFB;">{resolution}</strong></span>
             <span>Speed: <strong style="color: #10B981;">{fps:.1f} FPS</strong></span>
             <span>Device: <strong style="color: #38BDF8;">WebCam (ID: 0)</strong></span>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -115,7 +116,7 @@ def render_camera_error_state(error_message: str) -> bool:
         bool: True if user clicked "Retry Camera Connection", False otherwise.
     """
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="background-color: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.5); border-radius: 12px; padding: 20px; text-align: center; margin: 10px 0;">
             <div style="font-size: 2rem; margin-bottom: 6px;">📹⚠️</div>
             <h4 style="color: #EF4444; margin: 0 0 6px 0; font-weight: 700;">Camera Stream Unavailable</h4>
@@ -126,7 +127,7 @@ def render_camera_error_state(error_message: str) -> bool:
                 Please verify that your webcam is connected, not locked by another app, and camera permissions are granted.
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 

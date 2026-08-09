@@ -8,9 +8,9 @@ Renders 30 FPS real-time UI components:
 - Head Pose & Risk Index: Pitch, Yaw, Roll degrees, Drowsiness Score (0-100), Decision Confidence
 """
 
+import textwrap
 import streamlit as st
 from typing import Dict, Any
-from dashboard.components.alert_badge import render_alert_badge
 from dashboard.utils.formatters import safe_float, safe_percentage, safe_int
 
 
@@ -22,7 +22,13 @@ def render_fast_alert_banner(telemetry_data: Dict[str, Any]) -> None:
     """
     state = telemetry_data.get("drowsiness_state", "ALERT")
     reason_str = telemetry_data.get("decision_reason", "Student alert. All telemetry metrics within nominal bounds.")
-    has_face = telemetry_data.get("has_face", False)
+    raw_has_face = telemetry_data.get("has_face", False)
+    has_face = bool(
+        raw_has_face
+        or telemetry_data.get("avg_ear") is not None
+        or telemetry_data.get("mar") is not None
+        or telemetry_data.get("head_pose_valid", False)
+    )
     frame_id = telemetry_data.get("frame_id")
     frame_badge = f'<span style="padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.08); color: #F59E0B; font-weight: 700; font-size: 0.65rem; margin-right: 6px;">FRAME #{frame_id}</span>' if frame_id else ''
 
@@ -51,7 +57,7 @@ def render_fast_alert_banner(telemetry_data: Dict[str, Any]) -> None:
     display_reason = reason_str if has_face else "Searching for Face in Camera Viewport..."
 
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="background: {banner_bg}; border: 1.5px solid {border_color}; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; transition: all 0.2s ease;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -69,7 +75,7 @@ def render_fast_alert_banner(telemetry_data: Dict[str, Any]) -> None:
                 <strong style="color: {border_color};">Reason:</strong> {display_reason}
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -88,22 +94,30 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
     render_fast_alert_banner(telemetry_data)
 
     # Telemetry Variables
-    has_face = telemetry_data.get("has_face", False)
+    raw_has_face = telemetry_data.get("has_face", False)
+    avg_ear_raw = telemetry_data.get("avg_ear")
+    mar_raw = telemetry_data.get("mar")
+    pitch_raw = telemetry_data.get("head_pose_pitch")
+    pose_valid_raw = telemetry_data.get("head_pose_valid", False)
+
+    # Face is active if flagged by detector OR if numeric telemetry metrics are present
+    has_face = bool(raw_has_face or avg_ear_raw is not None or mar_raw is not None or pose_valid_raw)
+
     eye_state = telemetry_data.get("eye_state", "Searching for Face..." if not has_face else "OPEN")
     mouth_state = telemetry_data.get("mouth_state", "Searching for Face..." if not has_face else "CLOSED")
 
-    avg_ear = telemetry_data.get("avg_ear") if has_face else None
+    avg_ear = avg_ear_raw if has_face else None
     left_ear = telemetry_data.get("left_ear") if has_face else None
     right_ear = telemetry_data.get("right_ear") if has_face else None
     ear_thresh = telemetry_data.get("ear_threshold", 0.250)
 
-    mar = telemetry_data.get("mar") if has_face else None
+    mar = mar_raw if has_face else None
     mar_thresh = telemetry_data.get("mar_threshold", 0.600)
 
-    pitch = telemetry_data.get("head_pose_pitch") if has_face else None
+    pitch = pitch_raw if has_face else None
     yaw = telemetry_data.get("head_pose_yaw") if has_face else None
     roll = telemetry_data.get("head_pose_roll") if has_face else None
-    pose_valid = telemetry_data.get("head_pose_valid", False) if has_face else False
+    pose_valid = pose_valid_raw if has_face else False
 
     score = telemetry_data.get("drowsiness_score", 0.0)
     confidence = telemetry_data.get("decision_confidence", 0.0 if not has_face else 98.0)
@@ -152,7 +166,7 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
     
     # 2. Ocular Telemetry Card
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="font-weight: 700; color: #F9FAFB; font-size: 0.85rem;">👁️ Eye State & EAR (Ocular)</div>
@@ -168,13 +182,13 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
                 <div style="background: {eye_color}; width: {ear_pct}%; height: 100%; transition: width 0.1s ease;"></div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
     # 3. Oral Telemetry Card
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div style="margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="font-weight: 700; color: #F9FAFB; font-size: 0.85rem;">👄 Mouth State & MAR (Oral)</div>
@@ -190,13 +204,13 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
                 <div style="background: {mouth_color}; width: {mar_pct}%; height: 100%; transition: width 0.1s ease;"></div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
     # 4. Drowsiness Risk Score Card
     st.markdown(
-        f"""
+        textwrap.dedent(f"""
         <div>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                 <div style="font-weight: 700; color: #F9FAFB; font-size: 0.85rem;">🛡️ Drowsiness Risk Index</div>
@@ -210,7 +224,7 @@ def render_fast_telemetry_panel(telemetry_data: Dict[str, Any]) -> None:
                 <div class="mono-val" style="font-size: 1.6rem; font-weight: 800; color: {score_color};">{score_str}/100</div>
             </div>
         </div>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
