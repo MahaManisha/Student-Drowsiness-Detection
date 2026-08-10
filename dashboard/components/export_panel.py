@@ -4,6 +4,7 @@ Student Drowsiness Detection System - Export Panel Component
 Provides downloadable CSV, JSON, and PDF report data bytes using Streamlit st.download_button.
 """
 
+import time
 import json
 import io
 import pandas as pd
@@ -12,22 +13,46 @@ from typing import Dict, Any, Optional
 
 
 def generate_csv_bytes(raw_telemetry: Dict[str, Any], history_df: Optional[pd.DataFrame]) -> bytes:
-    """Generates CSV bytes for session telemetry."""
-    if history_df is not None and not history_df.empty:
-        return history_df.to_csv(index=False).encode('utf-8')
-    
-    # Fallback CSV data
+    """
+    Generates a comprehensive, multi-row time-series CSV session report.
+    Includes full timestamp history, EAR, MAR, Head Pose angles, Blinks, Yawns, Risk Scores, and Alert Reasons.
+    """
     stats = raw_telemetry.get("session_stats", {}) if raw_telemetry else {}
-    df = pd.DataFrame([{
-        "session_time": stats.get("total_session_time", "00:00:00"),
-        "average_ear": stats.get("average_ear", 0.285),
-        "average_mar": stats.get("average_mar", 0.180),
-        "blink_count": stats.get("blink_count", 0),
-        "yawn_count": stats.get("yawn_count", 0),
-        "highest_score": stats.get("highest_score", 0.0),
-        "longest_closure": stats.get("longest_eye_closure", 0.0)
+
+    if history_df is not None and not history_df.empty:
+        df_export = history_df.copy()
+        column_mapping = {
+            "timestamp": "Timestamp",
+            "frame_id": "Frame ID",
+            "ear": "Eye Aspect Ratio (EAR)",
+            "eye_state": "Eye State",
+            "mar": "Mouth Aspect Ratio (MAR)",
+            "mouth_state": "Mouth State",
+            "pitch": "Head Pitch (°)",
+            "yaw": "Head Yaw (°)",
+            "roll": "Head Roll (°)",
+            "score": "Drowsiness Risk Score (0-100)",
+            "blinks": "Cumulative Blinks",
+            "yawns": "Cumulative Yawns",
+            "state": "Safety Status",
+            "reason": "Detection Explanation"
+        }
+        df_export = df_export.rename(columns={k: v for k, v in column_mapping.items() if k in df_export.columns})
+        return df_export.to_csv(index=False).encode('utf-8')
+
+    df_summary = pd.DataFrame([{
+        "Report Date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "Session Duration": stats.get("total_session_time", "00:00:00"),
+        "Average EAR": stats.get("average_ear", raw_telemetry.get("avg_ear", 0.285)),
+        "Average MAR": stats.get("average_mar", raw_telemetry.get("mar", 0.070)),
+        "Total Blink Count": stats.get("blink_count", raw_telemetry.get("blink_count", 0)),
+        "Total Yawn Count": stats.get("yawn_count", raw_telemetry.get("yawn_count", 0)),
+        "Peak Risk Score": stats.get("highest_score", raw_telemetry.get("drowsiness_score", 0.0)),
+        "Longest Eye Closure (s)": stats.get("longest_eye_closure", 0.0),
+        "Overall Status": raw_telemetry.get("drowsiness_state", "ALERT"),
+        "Pipeline Speed (FPS)": raw_telemetry.get("fps", 30.0)
     }])
-    return df.to_csv(index=False).encode('utf-8')
+    return df_summary.to_csv(index=False).encode('utf-8')
 
 
 def generate_json_bytes(raw_telemetry: Dict[str, Any], history_df: Optional[pd.DataFrame]) -> bytes:
@@ -101,13 +126,18 @@ def render_export_panel(raw_telemetry: Dict[str, Any], history_df: Optional[pd.D
     """
     Renders export controls panel with PDF, CSV, and JSON download buttons.
     """
-    st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
         """
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem;">📥 Export Session Data & Reports</div>
-            <span style="font-size: 0.7rem; color: #10B981; font-weight: 700;">● EXPORT READY</span>
-        </div>
+        <div style="background-color: #161B22; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div style="font-weight: 800; color: #F9FAFB; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                    <span>📥</span> Instant Download Session Reports
+                </div>
+                <span style="font-size: 0.75rem; color: #10B981; font-weight: 800; background: rgba(16,185,129,0.15); padding: 4px 10px; border-radius: 20px;">● EXPORT READY</span>
+            </div>
+            <p style="color: #9CA3AF; font-size: 0.85rem; margin-top: 0; margin-bottom: 14px;">
+                Download complete time-series telemetry data, session metrics, and AI safety summaries in CSV, JSON, or text format.
+            </p>
         """,
         unsafe_allow_html=True
     )
@@ -117,7 +147,7 @@ def render_export_panel(raw_telemetry: Dict[str, Any], history_df: Optional[pd.D
     with col1:
         csv_bytes = generate_csv_bytes(raw_telemetry, history_df)
         st.download_button(
-            label="📊 Export CSV",
+            label="📊 Export CSV Report",
             data=csv_bytes,
             file_name="drowsiness_session_report.csv",
             mime="text/csv",
@@ -128,7 +158,7 @@ def render_export_panel(raw_telemetry: Dict[str, Any], history_df: Optional[pd.D
     with col2:
         json_bytes = generate_json_bytes(raw_telemetry, history_df)
         st.download_button(
-            label="📁 Export JSON",
+            label="📁 Export JSON Payload",
             data=json_bytes,
             file_name="drowsiness_session_report.json",
             mime="application/json",
@@ -138,7 +168,7 @@ def render_export_panel(raw_telemetry: Dict[str, Any], history_df: Optional[pd.D
     with col3:
         pdf_bytes = generate_pdf_text_bytes(raw_telemetry)
         st.download_button(
-            label="📄 Export PDF Report",
+            label="📄 Export Executive PDF",
             data=pdf_bytes,
             file_name="drowsiness_session_report.txt",
             mime="text/plain",

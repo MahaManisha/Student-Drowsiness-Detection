@@ -227,15 +227,22 @@ def render_slow_analytics_fragment(camera_mgr) -> None:
     now_str = time.strftime("%H:%M:%S", time.localtime())
     st.session_state.telemetry_history.append({
         "timestamp": now_str,
-        "ear": telemetry.get("avg_ear", 0.0) if telemetry.get("avg_ear") is not None else 0.0,
-        "mar": telemetry.get("mar", 0.0) if telemetry.get("mar") is not None else 0.0,
-        "score": telemetry.get("drowsiness_score", 0.0),
+        "frame_id": getattr(snapshot, "frame_id", telemetry.get("frame_id", 0)),
+        "ear": round(telemetry.get("avg_ear", 0.0), 3) if telemetry.get("avg_ear") is not None else 0.0,
+        "eye_state": telemetry.get("eye_state", "OPEN"),
+        "mar": round(telemetry.get("mar", 0.0), 3) if telemetry.get("mar") is not None else 0.0,
+        "mouth_state": telemetry.get("mouth_state", "CLOSED"),
+        "pitch": round(telemetry.get("head_pose_pitch", 0.0), 1),
+        "yaw": round(telemetry.get("head_pose_yaw", 0.0), 1),
+        "roll": round(telemetry.get("head_pose_roll", 0.0), 1),
+        "score": round(telemetry.get("drowsiness_score", 0.0), 1),
         "blinks": telemetry.get("blink_count", 0),
         "yawns": telemetry.get("yawn_count", 0),
-        "state": telemetry.get("drowsiness_state", "ALERT")
+        "state": telemetry.get("drowsiness_state", "ALERT"),
+        "reason": telemetry.get("decision_reason", "Monitoring active.")
     })
-    if len(st.session_state.telemetry_history) > 100:
-        st.session_state.telemetry_history = st.session_state.telemetry_history[-100:]
+    if len(st.session_state.telemetry_history) > 1000:
+        st.session_state.telemetry_history = st.session_state.telemetry_history[-1000:]
 
     history_df = pd.DataFrame(st.session_state.telemetry_history)
 

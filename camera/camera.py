@@ -366,7 +366,9 @@ class CameraStream:
         with self._queue_lock:
             while True:
                 try:
-                    latest_item = self._frame_queue.get_nowait()
+                    item = self._frame_queue.get_nowait()
+                    if item is not None:
+                        latest_item = item
                 except queue.Empty:
                     break
 

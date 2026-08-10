@@ -6,7 +6,7 @@ Renders a historical reports catalog displaying completed session records with i
 
 import streamlit as st
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dashboard.components.export_panel import generate_json_bytes
 
 

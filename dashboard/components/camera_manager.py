@@ -247,14 +247,7 @@ class DashboardCameraManager:
     def _ai_worker_loop(self) -> None:
         logger.info("[THREAD 2] AI Worker loop started.")
         while self._worker_running and self.is_connected:
-            # Stage 1: Frame dequeue - Flush stale queued frames to guarantee zero queue latency
-            while hasattr(self.camera, "_frame_queue") and self.camera._frame_queue.qsize() > 1:
-                try:
-                    self.camera._frame_queue.get_nowait()
-                    self.stale_frames_dropped += 1
-                except Exception:
-                    break
-
+            # Stage 1: Frame dequeue - Consume latest frame with zero queue backlog
             t1_s1 = time.perf_counter()
             ret, frame, meta = self.camera.read_frame_with_meta()
             t2_s1 = time.perf_counter()
@@ -335,7 +328,7 @@ class DashboardCameraManager:
                     t_ear_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_EAR]", frame_id, 0.0)
 
-                    right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(face_landmarks, frame_shape=None)
+                    right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(face_landmarks, frame_shape=(h, w))
                     right_ear, left_ear, avg_ear = self.ear_calculator.calculate_ear(right_eye, left_eye)
                     right_state, left_state, overall_state = self.classifier.classify_both_eyes(right_ear, left_ear)
 
@@ -351,7 +344,7 @@ class DashboardCameraManager:
                     t_mar_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_MAR]", frame_id, 0.0)
 
-                    inner_lip, outer_lip = self.mouth_extractor.extract_mouth_landmarks(face_landmarks, frame_shape=None)
+                    inner_lip, outer_lip = self.mouth_extractor.extract_mouth_landmarks(face_landmarks, frame_shape=(h, w))
                     mar_val = self.mar_calculator.calculate_mar(inner_lip, outer_lip)
 
                     t2_s5 = time.perf_counter()
@@ -536,10 +529,10 @@ class DashboardCameraManager:
                     self._latest_annotated_frame = frame.copy()
                     self._latest_annotated_frame_id = frame_id
 
-                # Stage 12: BGR to RGB Conversion (In-place/direct conversion)
+                # Stage 12: BGR to RGB Conversion
                 self.last_ai_stage = "AI_BEFORE_RGB"
                 t1_s2 = time.perf_counter()
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB, dst=frame)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 t2_s2 = time.perf_counter()
                 self.last_ai_stage = "AI_AFTER_RGB"
                 s2_bgr2rgb_ms = (t2_s2 - t1_s2) * 1000.0

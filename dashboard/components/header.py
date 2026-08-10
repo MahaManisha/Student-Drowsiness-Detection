@@ -6,6 +6,7 @@ FPS throughput counter, and alert status pill.
 Integrates type-safe telemetry formatters to prevent numeric formatting crashes.
 """
 
+import time
 import streamlit as st
 from typing import Dict, Any
 from dashboard.components.alert_badge import render_alert_badge
@@ -16,7 +17,16 @@ def render_header(telemetry_data: Dict[str, Any]) -> None:
     """
     Renders top application header bar.
     """
-    session_time = telemetry_data.get("session_time_str", "00:00:00")
+    if "session_start_time" not in st.session_state:
+        st.session_state.session_start_time = time.time()
+
+    session_time = telemetry_data.get("session_time_str")
+    if not session_time or session_time in ["00:00", "00:00:00"]:
+        elapsed = max(0, int(time.time() - st.session_state.session_start_time))
+        hrs = elapsed // 3600
+        mins = (elapsed % 3600) // 60
+        secs = elapsed % 60
+        session_time = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
     fps_val = telemetry_data.get("fps", 30.0)
     drowsiness_state = telemetry_data.get("drowsiness_state", "ALERT")
 

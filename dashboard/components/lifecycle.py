@@ -47,18 +47,6 @@ def get_singleton_camera_manager() -> DashboardCameraManager:
 
     with _SINGLETON_LOCK:
         if _GLOBAL_CAMERA_MANAGER_SINGLETON is not None and getattr(_GLOBAL_CAMERA_MANAGER_SINGLETON, "is_connected", False):
-            try:
-                from detection.mar_calculator import MARCalculator
-                _GLOBAL_CAMERA_MANAGER_SINGLETON.mar_calculator = MARCalculator()
-                if hasattr(_GLOBAL_CAMERA_MANAGER_SINGLETON, "temporal_analyzer"):
-                    _GLOBAL_CAMERA_MANAGER_SINGLETON.temporal_analyzer.min_blink_duration = getattr(config, "MIN_BLINK_DURATION_FRAMES", 1)
-                    _GLOBAL_CAMERA_MANAGER_SINGLETON.temporal_analyzer.max_blink_duration = getattr(config, "MAX_BLINK_DURATION_FRAMES", 25)
-                if hasattr(_GLOBAL_CAMERA_MANAGER_SINGLETON, "classifier"):
-                    _GLOBAL_CAMERA_MANAGER_SINGLETON.classifier.ear_threshold = getattr(config, "EAR_THRESHOLD", 0.24)
-                if hasattr(_GLOBAL_CAMERA_MANAGER_SINGLETON, "ear_calculator"):
-                    _GLOBAL_CAMERA_MANAGER_SINGLETON.ear_calculator.ear_threshold = getattr(config, "EAR_THRESHOLD", 0.24)
-            except Exception:
-                pass
             st.session_state.global_camera_manager_singleton = _GLOBAL_CAMERA_MANAGER_SINGLETON
             return _GLOBAL_CAMERA_MANAGER_SINGLETON
 

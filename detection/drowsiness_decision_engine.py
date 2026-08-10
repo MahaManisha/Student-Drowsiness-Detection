@@ -317,11 +317,13 @@ class StudentDrowsinessDecisionEngine:
         pitch = pose_metrics.get("pitch", 0.0)
         pose_valid = pose_metrics.get("valid", False)
 
-        # 1. Prolonged Eye Closure (max 50 pts)
+        # 1. Prolonged / Active Eye Closure (max 50 pts)
+        consecutive_closed_frames = eye_metrics.get("consecutive_closed_frames", 0)
         if closed_duration >= self.max_eye_closure_duration:
             eye_pts = 50.0
-        elif closed_duration > 0.0:
-            eye_pts = min(50.0, (closed_duration / self.max_eye_closure_duration) * 50.0)
+        elif closed_duration > 0.0 or consecutive_closed_frames > 0:
+            # Immediately trigger DROWSY state (min 50.0 pts) when eyes are closed
+            eye_pts = max(50.0, (closed_duration / self.max_eye_closure_duration) * 50.0)
         else:
             eye_pts = 0.0
 

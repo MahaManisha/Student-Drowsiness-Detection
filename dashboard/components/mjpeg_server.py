@@ -101,10 +101,10 @@ class MJPEGStreamHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.flush()
 
                     time.sleep(0.005)
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, OSError):
                     break
-                except Exception as ex:
-                    time.sleep(0.01)
+                except Exception:
+                    break
         else:
             self.send_error(404, "Not Found")
 

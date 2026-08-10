@@ -71,28 +71,33 @@ def render_report_summary(raw_telemetry: Dict[str, Any]) -> None:
     max_roll = raw_telemetry.get("head_pose_roll", 0.8) if raw_telemetry else 0.8
 
     # 1. Header Metadata Card
-    st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div style="font-weight: 800; color: #F9FAFB; font-size: 1.05rem; margin-bottom: 10px;">📋 Session Report Overview ({session_id})</div>
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 0.75rem; background: #111827; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); margin-bottom: 12px;">
-            <div><span style="color: #9CA3AF;">Date:</span> <strong style="color: #F9FAFB;">{session_date}</strong></div>
-            <div><span style="color: #9CA3AF;">Start Time:</span> <strong style="color: #F9FAFB;">{start_time}</strong></div>
-            <div><span style="color: #9CA3AF;">End Time:</span> <strong style="color: #F9FAFB;">{end_time}</strong></div>
-            <div><span style="color: #9CA3AF;">Total Duration:</span> <strong style="color: #10B981;">{duration}</strong></div>
-            <div><span style="color: #9CA3AF;">Camera Input:</span> <strong style="color: #38BDF8;">{camera_name}</strong></div>
-            <div><span style="color: #9CA3AF;">Average Speed:</span> <strong style="color: #F9FAFB;">{avg_fps:.1f} FPS</strong></div>
-            <div><span style="color: #9CA3AF;">Status:</span> <strong style="color: #10B981;">COMPLETED</strong></div>
-            <div><span style="color: #9CA3AF;">Report Version:</span> <strong style="color: #9CA3AF;">v2.5 Standard</strong></div>
+        <div style="background-color: #161B22; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+            <div style="font-weight: 800; color: #F9FAFB; font-size: 1.05rem; margin-bottom: 12px;">📋 Session Report Overview ({session_id})</div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; font-size: 0.8rem; background: #0E131F; padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                <div><span style="color: #9CA3AF;">Date:</span> <strong style="color: #F9FAFB;">{session_date}</strong></div>
+                <div><span style="color: #9CA3AF;">Start Time:</span> <strong style="color: #F9FAFB;">{start_time}</strong></div>
+                <div><span style="color: #9CA3AF;">End Time:</span> <strong style="color: #F9FAFB;">{end_time}</strong></div>
+                <div><span style="color: #9CA3AF;">Total Duration:</span> <strong style="color: #10B981;">{duration}</strong></div>
+                <div><span style="color: #9CA3AF;">Camera Input:</span> <strong style="color: #38BDF8;">{camera_name}</strong></div>
+                <div><span style="color: #9CA3AF;">Average Speed:</span> <strong style="color: #F9FAFB;">{avg_fps:.1f} FPS</strong></div>
+                <div><span style="color: #9CA3AF;">Status:</span> <strong style="color: #10B981;">COMPLETED</strong></div>
+                <div><span style="color: #9CA3AF;">Report Version:</span> <strong style="color: #9CA3AF;">v2.5 Standard</strong></div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # 2. 11 Detailed Session Result Metrics Grid
-    st.markdown('<div class="dash-card">', unsafe_allow_html=True)
-    st.markdown('<div style="font-weight: 700; color: #F9FAFB; font-size: 0.95rem; margin-bottom: 12px;">📊 Detailed Session Result Metrics</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="background-color: #161B22; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+            <div style="font-weight: 800; color: #F9FAFB; font-size: 1.05rem; margin-bottom: 12px;">📊 Detailed Session Result Metrics</div>
+        """,
+        unsafe_allow_html=True
+    )
 
     m1, m2, m3, m4 = st.columns(4)
     with m1:
@@ -119,14 +124,14 @@ def render_report_summary(raw_telemetry: Dict[str, Any]) -> None:
 
     # 3. AI Executive Summary Natural Language Narrative
     narrative_text = generate_ai_narrative(stats, raw_telemetry)
-    st.markdown('<div class="dash-card">', unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div style="font-weight: 700; color: #F9FAFB; font-size: 0.95rem; margin-bottom: 6px;">🧠 AI Executive Summary Narrative</div>
-        <div style="background-color: #111827; border-left: 4px solid #10B981; border-radius: 6px; padding: 12px 14px; font-size: 0.85rem; color: #D1D5DB; line-height: 1.5; box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);">
-            "{narrative_text}"
+        <div style="background-color: #161B22; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+            <div style="font-weight: 800; color: #F9FAFB; font-size: 1.05rem; margin-bottom: 10px;">🧠 AI Executive Summary Narrative</div>
+            <div style="background-color: #0E131F; border-left: 4px solid #10B981; border-radius: 8px; padding: 14px 16px; font-size: 0.9rem; color: #E2E8F0; line-height: 1.6;">
+                "{narrative_text}"
+            </div>
         </div>
         """,
         unsafe_allow_html=True
     )
-    st.markdown('</div>', unsafe_allow_html=True)
