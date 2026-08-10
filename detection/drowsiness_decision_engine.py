@@ -232,10 +232,10 @@ class StudentDrowsinessDecisionEngine:
         # Apply rule components
         abnormal_eye_closure = closed_duration >= self.max_eye_closure_duration
         abnormal_yawning = (
-            yawn_count >= 1
-            or is_active_yawn
-            or (yawn_duration >= 0.3)
-            or (mar_val is not None and mar_val >= getattr(config, "MAR_THRESHOLD", 0.25) and yawn_duration >= 0.2)
+            is_active_yawn
+            or (yawn_duration >= 0.2)
+            or (mar_val is not None and mar_val >= getattr(config, "MAR_THRESHOLD", 0.25) and yawn_duration >= 0.1)
+            or (yawn_count >= self.yawn_frequency_limit)
         )
         
         # Determine if head pose contribution is allowed (Phase 11.8 Calibration)
@@ -269,7 +269,7 @@ class StudentDrowsinessDecisionEngine:
                 reason = "Isolated prolonged eye closure detected. Confidence remains low without other signals."
             elif abnormal_yawning:
                 confidence = 0.50
-                reason = "Active yawning activity detected."
+                reason = "Isolated yawning activity detected."
             else:  # abnormal_head_posture
                 confidence = 0.20
                 reason = "Sustained downward head posture detected. Confidence remains low without other signals."
@@ -320,8 +320,10 @@ class StudentDrowsinessDecisionEngine:
         # 1. Prolonged Eye Closure (max 50 pts)
         if closed_duration >= self.max_eye_closure_duration:
             eye_pts = 50.0
-        else:
+        elif closed_duration > 0.0:
             eye_pts = min(50.0, (closed_duration / self.max_eye_closure_duration) * 50.0)
+        else:
+            eye_pts = 0.0
 
         # 2. Slow Blink / abnormal blink duration scoring (max 15 pts)
         if closed_duration >= self.max_blink_duration:
@@ -330,7 +332,7 @@ class StudentDrowsinessDecisionEngine:
             blink_pts = 0.0
 
         # 3. Yawn Activity scoring (max 50 pts)
-        # Active yawning (MAR >= threshold & open duration >= 0.2s) allocates 35-50 pts to immediately exceed alert threshold (30.0)
+        # Active yawning (MAR >= threshold & open duration >= 0.1s) allocates 35-50 pts while actively open
         is_open_yawn = (
             is_active_yawn
             or (yawn_duration >= 0.2)
@@ -338,23 +340,23 @@ class StudentDrowsinessDecisionEngine:
         )
 
         if is_open_yawn:
-            # Active yawn in progress: min 35.0 pts up to 50.0 pts based on duration
-            yawn_pts = min(50.0, 35.0 + (yawn_duration * 10.0))
-        elif yawn_count >= 1:
-            yawn_pts = min(50.0, 35.0 + (yawn_count - 1) * 10.0)
+            # Active yawn in progress: min 35.0 pts up to 50.0 pts based on duration and yawn count
+            if yawn_count >= self.yawn_frequency_limit:
+                yawn_pts = 50.0
+            else:
+                yawn_pts = min(50.0, 35.0 + (yawn_duration * 10.0))
         else:
+            # Mouth is closed: zero active yawn points
             yawn_pts = 0.0
 
         # 4. Downward Head posture deflection scoring (max 15 pts)
         abnormal_eye_closure = closed_duration >= self.max_eye_closure_duration
-        abnormal_yawning = is_open_yawn or (yawn_count >= 1)
+        abnormal_yawning = is_open_yawn or (yawn_count >= self.yawn_frequency_limit)
         droop_duration = self.consecutive_droop_frames / self.fps if self.fps > 0 else 0.0
         sustained_droop = droop_duration >= 3.0
         allow_head_pose = sustained_droop or abnormal_eye_closure or abnormal_yawning
 
         if pose_valid and allow_head_pose and pitch > self.head_pitch_limit:
-            pose_pts = 15.0
-        elif pose_valid and allow_head_pose and pitch > 0.0:
             pose_pts = min(15.0, (pitch / self.head_pitch_limit) * 15.0)
         else:
             pose_pts = 0.0

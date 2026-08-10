@@ -24,26 +24,26 @@ def render_sidebar() -> str:
         )
 
         selected = option_menu(
-            menu_title="Main Menu",
+            menu_title=None,
             options=["Dashboard", "Reports", "Session History", "Settings", "About"],
             icons=["speedometer2", "file-earmark-bar-graph", "clock-history", "gear", "info-circle"],
             menu_icon="cast",
             default_index=0,
             styles={
                 "container": {"padding": "0!important", "background-color": "transparent"},
-                "icon": {"color": "#10B981", "font-size": "16px"},
+                "icon": {"color": "#10B981", "font-size": "18px"},
                 "nav-link": {
-                    "font-size": "14px",
+                    "font-size": "15px",
                     "text-align": "left",
-                    "margin": "4px",
-                    "color": "#9CA3AF",
+                    "margin": "6px 4px",
+                    "color": "#E2E8F0",
                     "border-radius": "8px",
-                    "font-weight": "500",
+                    "font-weight": "600",
                 },
                 "nav-link-selected": {
                     "background-color": "#1F2937",
-                    "color": "#F9FAFB",
-                    "font-weight": "700",
+                    "color": "#FFFFFF",
+                    "font-weight": "800",
                     "border-left": "4px solid #10B981",
                 },
             },

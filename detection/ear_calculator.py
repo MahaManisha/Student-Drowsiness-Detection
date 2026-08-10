@@ -374,6 +374,10 @@ class EARCalculator:
             Optional[float]: Average EAR float value, or single eye EAR if only one eye is valid, or None if both are None.
         """
         if right_ear is not None and left_ear is not None:
+            # If one eye is open (>= threshold) and the other is foreshortened by head turn / perspective angle,
+            # use the open eye EAR to prevent false eye closure detection.
+            if (right_ear >= self.ear_threshold) != (left_ear >= self.ear_threshold):
+                return float(max(right_ear, left_ear))
             return float((right_ear + left_ear) / 2.0)
         elif right_ear is not None:
             logger.warning("Left eye EAR unavailable; falling back to right eye EAR.")

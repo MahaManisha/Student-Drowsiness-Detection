@@ -179,6 +179,11 @@ class DashboardCameraManager:
         self._latest_telemetry: Dict[str, Any] = self._get_fallback_telemetry()
         self._latest_snapshot: Optional[FrameSnapshot] = None
 
+        # Atomic thread-safe buffer for MediaPipe-annotated BGR frame streaming
+        self._latest_annotated_frame: Optional[np.ndarray] = None
+        self._latest_annotated_frame_id: int = 0
+        self._annotated_frame_lock: threading.Lock = threading.Lock()
+
         # Tracking state to smooth out single-frame MediaPipe detection drops
         self._last_valid_avg_ear: Optional[float] = None
         self._last_valid_left_ear: Optional[float] = None
@@ -195,6 +200,7 @@ class DashboardCameraManager:
         self._ai_fps_timestamps: deque = deque()
 
         # Watchdog fields for Phase 1 & 2
+        self.stale_frames_dropped: int = 0
         self.ai_dequeue_frame_id: int = 0
         self.ai_dequeue_perf: float = time.perf_counter()
         self.facemesh_completed_frame_id: int = 0
@@ -245,6 +251,7 @@ class DashboardCameraManager:
             while hasattr(self.camera, "_frame_queue") and self.camera._frame_queue.qsize() > 1:
                 try:
                     self.camera._frame_queue.get_nowait()
+                    self.stale_frames_dropped += 1
                 except Exception:
                     break
 
@@ -328,7 +335,7 @@ class DashboardCameraManager:
                     t_ear_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_EAR]", frame_id, 0.0)
 
-                    right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(face_landmarks, frame_shape=frame.shape)
+                    right_eye, left_eye = self.eye_extractor.extract_eye_landmarks(face_landmarks, frame_shape=None)
                     right_ear, left_ear, avg_ear = self.ear_calculator.calculate_ear(right_eye, left_eye)
                     right_state, left_state, overall_state = self.classifier.classify_both_eyes(right_ear, left_ear)
 
@@ -344,7 +351,7 @@ class DashboardCameraManager:
                     t_mar_start = time.time()
                     log_timeline_debug("AIWorkerThread", "_ai_worker_loop", "[BEFORE_MAR]", frame_id, 0.0)
 
-                    inner_lip, outer_lip = self.mouth_extractor.extract_mouth_landmarks(face_landmarks, frame_shape=frame.shape)
+                    inner_lip, outer_lip = self.mouth_extractor.extract_mouth_landmarks(face_landmarks, frame_shape=None)
                     mar_val = self.mar_calculator.calculate_mar(inner_lip, outer_lip)
 
                     t2_s5 = time.perf_counter()
@@ -404,19 +411,6 @@ class DashboardCameraManager:
                         self._last_valid_pose_valid = pose_valid
                     self._last_valid_face_frame_id = frame_id
                     self._last_valid_face_time = time.time()
-                elif getattr(self, "_last_valid_face_time", 0) > 0 and (time.time() - self._last_valid_face_time) <= 3.0:
-                    # Smooth out MediaPipe detection drops (up to 3.0s grace period)
-                    has_face = True
-                    avg_ear = self._last_valid_avg_ear
-                    left_ear = self._last_valid_left_ear
-                    right_ear = self._last_valid_right_ear
-                    overall_state = self._last_valid_eye_state if self._last_valid_eye_state != EyeState.UNKNOWN else overall_state
-                    mar_val = self._last_valid_mar
-                    mouth_state_str = self._last_valid_mouth_state
-                    pitch = self._last_valid_pitch
-                    yaw = self._last_valid_yaw
-                    roll = self._last_valid_roll
-                    pose_valid = self._last_valid_pose_valid
 
                 t2_s8 = time.perf_counter()
                 self.last_ai_stage = "AI_AFTER_HEADPOSE"
@@ -537,6 +531,11 @@ class DashboardCameraManager:
                 self.last_ai_stage = "AI_AFTER_HUD"
                 s10_hud_ms = (t2_s10 - t1_s10) * 1000.0
 
+                # Publish BGR annotated frame to low-latency buffer for HTTP MJPEG streamer
+                with self._annotated_frame_lock:
+                    self._latest_annotated_frame = frame.copy()
+                    self._latest_annotated_frame_id = frame_id
+
                 # Stage 12: BGR to RGB Conversion (In-place/direct conversion)
                 self.last_ai_stage = "AI_BEFORE_RGB"
                 t1_s2 = time.perf_counter()
@@ -591,6 +590,31 @@ class DashboardCameraManager:
                     "session_stats": self.stats_tracker.get_stats(),
                     "events": _format_events_to_schema(self.alert_manager.event_log),
                     "frame_id": frame_id,
+                    "frame_sync": {
+                        "camera_frame_id": camera_latest_frame_id,
+                        "mediapipe_frame_id": frame_id,
+                        "ear_frame_id": frame_id,
+                        "mar_frame_id": frame_id,
+                        "headpose_frame_id": frame_id,
+                        "telemetry_frame_id": frame_id,
+                        "mjpeg_frame_id": camera_latest_frame_id,
+                        "camera_to_mediapipe_lag": max(0, camera_latest_frame_id - frame_id),
+                        "mediapipe_to_ear_lag": 0,
+                        "mediapipe_to_mar_lag": 0,
+                        "mediapipe_to_headpose_lag": 0,
+                    },
+                    "ai_stage_timings": {
+                        "camera_capture_ms": s1_dequeue_ms,
+                        "mediapipe_ms": s3_mp_ms,
+                        "ear_ms": s4_ear_ms,
+                        "mar_ms": s5_mar_ms,
+                        "headpose_ms": s8_headpose_ms,
+                        "drowsiness_ms": s6_blink_ms + s7_yawn_ms,
+                        "decision_engine_ms": s9_decision_ms,
+                        "alert_manager_ms": s9_alert_ms,
+                        "total_ai_processing_ms": (time.time() - t_ai_start) * 1000.0,
+                        "stale_frames_dropped": getattr(self, "stale_frames_dropped", 0),
+                    },
                     "perf_stages": {
                         "1_camera_capture": (t2_cap - t1_cap) * 1000.0,
                         "2_queue_write": (t2_qw - t1_qw) * 1000.0,
@@ -764,6 +788,22 @@ class DashboardCameraManager:
         """Backwards compatible accessor delegating to get_latest_snapshot()."""
         snap = self.get_latest_snapshot()
         return snap.success, snap.rgb_frame, snap.telemetry
+
+    def get_latest_raw_frame(self) -> Tuple[Optional[np.ndarray], int]:
+        """Delegates directly to CameraStream for zero-latency raw camera frame retrieval."""
+        if hasattr(self, "camera") and self.camera is not None:
+            return self.camera.get_latest_raw_frame()
+        return None, 0
+
+    def get_latest_annotated_frame(self) -> Tuple[Optional[np.ndarray], int]:
+        """
+        Thread-safe accessor for the newest MediaPipe-annotated BGR frame and frame ID.
+        Provides zero-latency, high-FPS access for the HTTP MJPEG video stream server.
+        """
+        with self._annotated_frame_lock:
+            if self._latest_annotated_frame is None:
+                return None, 0
+            return self._latest_annotated_frame, self._latest_annotated_frame_id
 
 
     def _get_fallback_telemetry(self) -> Dict[str, Any]:

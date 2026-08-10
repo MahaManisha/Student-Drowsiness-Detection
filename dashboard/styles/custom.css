@@ -201,7 +201,7 @@ footer {
   line-height: 1;
 }
 
-/* Sidebar Custom Styling */
+/* Sidebar High Contrast Readability & Bright Text ("Remove Blind CSS") */
 section[data-testid="stSidebar"] {
   background-color: #0D1117 !important;
   border-right: 1px solid var(--border-subtle) !important;
@@ -209,4 +209,36 @@ section[data-testid="stSidebar"] {
 
 section[data-testid="stSidebar"] .block-container {
   padding-top: 1.5rem !important;
+}
+
+section[data-testid="stSidebar"] * {
+  color: #F8FAFC !important;
+  opacity: 1 !important;
+}
+
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] button,
+section[data-testid="stSidebar"] div,
+section[data-testid="stSidebar"] a,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+  color: #E2E8F0 !important;
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}
+
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea,
+section[data-testid="stSidebar"] select {
+  background-color: #1E293B !important;
+  color: #FFFFFF !important;
+  border: 1px solid #475569 !important;
+  border-radius: 8px !important;
+  opacity: 1 !important;
+}
+
+section[data-testid="stSidebar"] input::placeholder {
+  color: #94A3B8 !important;
+  opacity: 1 !important;
 }

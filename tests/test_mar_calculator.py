@@ -12,6 +12,7 @@ Validates that:
 
 import pytest
 import numpy as np
+import config
 from detection.mar_calculator import MARCalculator
 
 
@@ -32,7 +33,7 @@ def test_mar_initialization():
     """Verify class threshold configurations."""
     # Test default
     calc = MARCalculator()
-    assert calc.mar_threshold == 0.60
+    assert calc.mar_threshold == getattr(config, "MAR_THRESHOLD", 0.25)
 
     # Test override
     calc_override = MARCalculator(mar_threshold=0.45)

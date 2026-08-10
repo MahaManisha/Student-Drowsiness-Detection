@@ -78,6 +78,11 @@ class CameraStream:
         self._current_fps: float = 0.0
         self._fps_timestamps: deque = deque()
 
+        # Thread-safe buffer for zero-latency MJPEG streaming
+        self._latest_raw_frame: Optional[np.ndarray] = None
+        self._latest_raw_frame_id: int = 0
+        self._raw_frame_lock: threading.Lock = threading.Lock()
+
         # Phase 1 & 2 Frame-Progression Watchdog Counters & Timestamps
         self.camera_read_frame_id: int = 0
         self.queue_publish_frame_id: int = 0
@@ -274,6 +279,9 @@ class CameraStream:
 
                 if ret and frame is not None:
                     log_runtime_debug("CameraProducerThread", "_producer_loop", "[AFTER_CAMERA_READ]", frame_id, elapsed_ms, "OK", f"shape={frame.shape}")
+                    with self._raw_frame_lock:
+                        self._latest_raw_frame = frame
+                        self._latest_raw_frame_id = frame_id
                     self.consecutive_failed_reads = 0
                     self.total_frames_captured += 1
                     self.camera_read_frame_id = frame_id
@@ -375,6 +383,16 @@ class CameraStream:
 
         frame, meta = latest_item
         return True, frame, meta
+
+    def get_latest_raw_frame(self) -> Tuple[Optional[np.ndarray], int]:
+        """
+        Thread-safe accessor for the newest raw camera frame and frame ID.
+        Provides zero-latency, zero-wait access for the HTTP MJPEG streaming server.
+        """
+        with self._raw_frame_lock:
+            if self._latest_raw_frame is None:
+                return None, 0
+            return self._latest_raw_frame, self._latest_raw_frame_id
 
     def get_fps(self) -> float:
         return round(self._current_fps, 1)

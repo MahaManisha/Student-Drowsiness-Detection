@@ -185,10 +185,10 @@ def render_header_fragment(camera_mgr) -> None:
     render_header(telemetry)
 
 
-@st.fragment(run_every=0.2)
+@st.fragment(run_every=0.1)
 def render_fast_telemetry_fragment(camera_mgr) -> None:
     """
-    FAST TELEMETRY TIER (0.2s / 5 Hz):
+    FAST TELEMETRY TIER (0.1s / 10 Hz):
     Ocular (EAR), Oral (MAR), Head Pose, Risk Score, Confidence,
     Alert Banner, XAI Decision Engine, and Session Statistics Summary.
     Single unified fragment for maximum performance & zero Streamlit lockup.
@@ -201,10 +201,10 @@ def render_fast_telemetry_fragment(camera_mgr) -> None:
     render_decision_panel(telemetry)
 
 
-@st.fragment(run_every=0.2)
+@st.fragment(run_every=0.1)
 def render_bottom_analytics_fragment(camera_mgr) -> None:
     """
-    MEDIUM TIER (0.2s / 5 Hz):
+    MEDIUM TIER (0.1s / 10 Hz):
     Session Statistics Summary Cards, Real-Time Alert Center, and Alert History Stream.
     """
     snapshot = camera_mgr.get_latest_snapshot()
@@ -243,13 +243,9 @@ def render_slow_analytics_fragment(camera_mgr) -> None:
     render_live_runtime_instrumentation(snapshot, 0.0, 30.0)
 
 
-def render_live_dashboard(camera_mgr) -> None:
-    """
-    Assembles multi-rate live dashboard layout using reactive Streamlit fragments.
-    """
-    # 1. Top Header Bar Fragment (1.0s)
-    render_header_fragment(camera_mgr)
-
+@st.fragment(run_every=0.1)
+def render_camera_viewport_fragment(camera_mgr) -> None:
+    """FAST VIEWPORT TIER (0.1s / 10 Hz): Live camera status header pill, MJPEG stream wrapper, and footer metadata."""
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
     has_face = bool(
@@ -258,25 +254,34 @@ def render_live_dashboard(camera_mgr) -> None:
         or telemetry.get("mar") is not None
         or telemetry.get("head_pose_valid", False)
     )
+    render_camera_panel_header(
+        is_live=True,
+        has_face=has_face,
+        state_str=telemetry.get("drowsiness_state", "ALERT"),
+        is_stalled=False
+    )
+    render_camera_viewport(snapshot, camera_mgr)
+    frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
+    render_camera_panel_footer(
+        fps=telemetry.get("fps", 30.0),
+        resolution="1280x720",
+        frame_id=frame_id
+    )
+
+
+def render_live_dashboard(camera_mgr) -> None:
+    """
+    Assembles multi-rate live dashboard layout using reactive Streamlit fragments.
+    """
+    # 1. Top Header Bar Fragment (1.0s)
+    render_header_fragment(camera_mgr)
 
     # 2. Main Live Viewport & Telemetry Grid
     col_center, col_right = st.columns([1.8, 1.2], gap="medium")
 
     with col_center:
-        # Native High-Performance MJPEG Camera Viewport
-        render_camera_panel_header(
-            is_live=True,
-            has_face=has_face,
-            state_str=telemetry.get("drowsiness_state", "ALERT"),
-            is_stalled=False
-        )
-        render_camera_viewport(snapshot, camera_mgr)
-        frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
-        render_camera_panel_footer(
-            fps=telemetry.get("fps", 30.0),
-            resolution="1280x720",
-            frame_id=frame_id
-        )
+        # Reactive Camera Viewport Fragment (0.2s)
+        render_camera_viewport_fragment(camera_mgr)
 
     with col_right:
         # Fast Telemetry & Decision Panel Fragment (0.2s / 5 Hz)

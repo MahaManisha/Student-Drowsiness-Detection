@@ -259,7 +259,10 @@ class EyeStateClassifier:
         left_state = self.classify_eye(left_ear, eval_threshold)
 
         if right_ear is not None and left_ear is not None:
-            avg_ear = (right_ear + left_ear) / 2.0
+            if (right_ear >= eval_threshold) != (left_ear >= eval_threshold):
+                avg_ear = max(right_ear, left_ear)
+            else:
+                avg_ear = (right_ear + left_ear) / 2.0
         else:
             avg_ear = right_ear if right_ear is not None else left_ear
 

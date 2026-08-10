@@ -26,6 +26,8 @@ except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
+import threading
+
 # MediaPipe Face Mesh Landmark Indices for Key Facial Features
 RIGHT_EYE_LANDMARKS = [33, 160, 158, 133, 153, 144]
 LEFT_EYE_LANDMARKS = [362, 385, 387, 263, 373, 380]
@@ -35,7 +37,8 @@ INNER_LIPS_LANDMARKS = [78, 308, 13, 14, 82, 312, 87, 317]
 
 class FaceMeshDetector:
     """
-    Modular MediaPipe Face Mesh detector using classic MediaPipe solutions.face_mesh pipeline.
+    Modular MediaPipe Face Mesh detector using classic MediaPipe solutions.face_mesh pipeline
+    or MediaPipe Tasks API with thread-safe execution locks.
     Extracts 468 (or 478 refined) 3D landmark coordinates and renders mesh grid overlays.
     """
 
@@ -47,21 +50,12 @@ class FaceMeshDetector:
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
     ) -> None:
-        """
-        Initializes the MediaPipe Face Mesh pipeline using classic Solutions API.
-
-        Args:
-            static_image_mode (bool): If True, treats input images as static photos.
-            max_num_faces (int): Maximum number of faces to detect per frame.
-            refine_landmarks (bool): If True, enables iris landmarks (478 total points).
-            min_detection_confidence (float): Minimum confidence threshold for face detection.
-            min_tracking_confidence (float): Minimum confidence threshold for landmark tracking.
-        """
         self.static_image_mode = static_image_mode
         self.max_num_faces = max_num_faces
         self.refine_landmarks = refine_landmarks
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
+        self._lock = threading.RLock()
 
         logger.info("Initializing MediaPipe Face Mesh...")
         solutions = getattr(mp, "solutions", None)
@@ -90,30 +84,38 @@ class FaceMeshDetector:
             self._init_tasks_api()
 
     def _init_tasks_api(self) -> None:
-        """Initializes or re-instantiates MediaPipe FaceLandmarker Tasks API context."""
+        """Initializes or re-instantiates MediaPipe FaceLandmarker Tasks API context under RLock."""
         import os
         from mediapipe.tasks.python import vision
         from mediapipe.tasks import python as mp_python
 
-        model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "face_landmarker.task")
-        if not os.path.exists(model_path):
-            import urllib.request
-            url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
-            urllib.request.urlretrieve(url, model_path)
+        with getattr(self, "_lock", threading.RLock()):
+            if hasattr(self, "landmarker") and self.landmarker is not None:
+                try:
+                    self.landmarker.close()
+                except Exception:
+                    pass
+                self.landmarker = None
 
-        base_options = mp_python.BaseOptions(model_asset_path=model_path)
-        options = vision.FaceLandmarkerOptions(
-            base_options=base_options,
-            running_mode=vision.RunningMode.IMAGE,
-            num_faces=self.max_num_faces,
-            min_face_detection_confidence=self.min_detection_confidence,
-            min_face_presence_confidence=self.min_tracking_confidence,
-        )
-        self.landmarker = vision.FaceLandmarker.create_from_options(options)
-        self.mp_drawing = vision.drawing_utils
-        self.mp_drawing_styles = vision.drawing_styles
-        self._using_tasks = True
-        logger.info("MediaPipe Face Mesh Detector (Tasks API) initialized successfully.")
+            model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "face_landmarker.task")
+            if not os.path.exists(model_path):
+                import urllib.request
+                url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+                urllib.request.urlretrieve(url, model_path)
+
+            base_options = mp_python.BaseOptions(model_asset_path=model_path)
+            options = vision.FaceLandmarkerOptions(
+                base_options=base_options,
+                running_mode=vision.RunningMode.IMAGE,
+                num_faces=self.max_num_faces,
+                min_face_detection_confidence=self.min_detection_confidence,
+                min_face_presence_confidence=self.min_tracking_confidence,
+            )
+            self.landmarker = vision.FaceLandmarker.create_from_options(options)
+            self.mp_drawing = vision.drawing_utils
+            self.mp_drawing_styles = vision.drawing_styles
+            self._using_tasks = True
+            logger.info("MediaPipe Face Mesh Detector (Tasks API) initialized successfully.")
 
     def detect_landmarks(
         self, frame: np.ndarray
@@ -136,8 +138,7 @@ class FaceMeshDetector:
 
         try:
             h, w, _ = frame.shape
-            detect_frame = cv2.resize(frame, (320, 240)) if (w > 320 or h > 240) else frame
-            rgb_frame = cv2.cvtColor(detect_frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             if not getattr(self, "_using_tasks", False):
                 results = self.face_mesh.process(rgb_frame)
@@ -155,24 +156,18 @@ class FaceMeshDetector:
                 return True, all_faces_landmarks, results.multi_face_landmarks[0]
             else:
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-                try:
-                    res = self.landmarker.detect(mp_image)
-                except Exception as ex:
-                    ex_str = str(ex).lower()
-                    if "shutdown" in ex_str or "schedule" in ex_str or "executor" in ex_str or "futures" in ex_str:
-                        if not sys.is_finalizing():
-                            logger.warning("Thread pool executor reset detected. Re-initializing Tasks API...")
-                            try:
-                                self._init_tasks_api()
-                                res = self.landmarker.detect(mp_image)
-                            except Exception as ex2:
-                                logger.error(f"Retry Tasks API detect failed: {ex2}")
-                                return False, [], None
-                        else:
+                with self._lock:
+                    try:
+                        res = self.landmarker.detect(mp_image)
+                    except Exception as ex:
+                        ex_str = str(ex).lower()
+                        logger.warning(f"Tasks API detect exception: {ex}. Re-initializing...")
+                        try:
+                            self._init_tasks_api()
+                            res = self.landmarker.detect(mp_image)
+                        except Exception as ex2:
+                            logger.error(f"Retry Tasks API detect failed: {ex2}")
                             return False, [], None
-                    else:
-                        logger.error(f"MediaPipe Tasks API detect exception: {ex}")
-                        return False, [], None
 
                 if not res.face_landmarks:
                     return False, [], None

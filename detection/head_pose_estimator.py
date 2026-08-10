@@ -82,15 +82,15 @@ class HeadPoseEstimator:
     # - Right Mouth Corner (subject's right): 61 (Lower width plane constraint)
     LANDMARK_INDICES = getattr(config, "HEAD_POSE_LANDMARK_INDICES", [4, 152, 263, 33, 291, 61])
 
-    # 3D generic facial model points in world coordinates (in millimeters)
-    # These represent coordinate offsets from the nose tip origin (0, 0, 0)
+    # 3D generic facial model points in camera world coordinates (in millimeters)
+    # Origin (0,0,0) at Nose tip. Y points DOWN in image space, X points RIGHT, Z points FORWARD (+Z depth into scene).
     MODEL_POINTS = np.array([
-        (0.0, 0.0, 0.0),             # Nose tip
-        (0.0, -330.0, -65.0),        # Chin
-        (-225.0, 170.0, -135.0),     # Left eye outer corner
-        (225.0, 170.0, -135.0),      # Right eye outer corner
-        (-150.0, -150.0, -125.0),    # Left mouth corner
-        (150.0, -150.0, -125.0)      # Right mouth corner
+        (0.0, 0.0, 0.0),             # Nose tip (4)
+        (0.0, 330.0, 65.0),          # Chin (152)
+        (225.0, -170.0, 135.0),      # Viewer Right / Subject Left Eye (263)
+        (-225.0, -170.0, 135.0),     # Viewer Left / Subject Right Eye (33)
+        (150.0, 150.0, 125.0),       # Viewer Right / Subject Left Mouth (291)
+        (-150.0, 150.0, 125.0)       # Viewer Left / Subject Right Mouth (61)
     ], dtype=np.float64)
 
     """
@@ -288,32 +288,23 @@ class HeadPoseEstimator:
 
     def _calculate_euler_angles(self, rvec: np.ndarray) -> Tuple[float, float, float]:
         """
-        Decomposes the rotation vector into Yaw, Pitch, and Roll angles in degrees.
+        Decomposes the rotation vector into Yaw, Pitch, and Roll angles in degrees using RQDecomp3x3.
         Handles coordinate conversions and numerical edge cases.
         """
         # Convert rotation vector to rotation matrix using Rodrigues
         R, _ = cv2.Rodrigues(rvec)
 
-        # Decompose rotation matrix into Euler angles (ZYX convention)
-        sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
-        singular = sy < 1e-6
+        # Decompose rotation matrix into Euler angles using OpenCV's RQDecomp3x3
+        angles, _, _, _, _, _ = cv2.RQDecomp3x3(R)
+        pitch_deg, yaw_deg, roll_deg = angles[0], angles[1], angles[2]
 
-        if not singular:
-            pitch = math.atan2(R[2, 1], R[2, 2])
-            yaw = math.atan2(-R[2, 0], sy)
-            roll = math.atan2(R[1, 0], R[0, 0])
-        else:
-            # Gimbal lock / singular case
-            pitch = math.atan2(-R[1, 2], R[1, 1])
-            yaw = math.atan2(-R[2, 0], sy)
-            roll = 0.0
+        # Normalize roll within [-180, 180] range
+        if roll_deg > 180.0:
+            roll_deg -= 360.0
+        elif roll_deg < -180.0:
+            roll_deg += 360.0
 
-        # Convert radians to degrees
-        pitch_deg = math.degrees(pitch)
-        yaw_deg = math.degrees(yaw)
-        roll_deg = math.degrees(roll)
-
-        return yaw_deg, pitch_deg, roll_deg
+        return float(yaw_deg), float(pitch_deg), float(roll_deg)
 
     def get_pose_metrics(self) -> Dict[str, Any]:
         """

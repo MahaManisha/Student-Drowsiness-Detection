@@ -57,25 +57,34 @@ class MJPEGStreamHandler(http.server.BaseHTTPRequestHandler):
             while True:
                 try:
                     if _CAMERA_MANAGER_REF is None:
-                        time.sleep(0.05)
-                        continue
-
-                    snapshot = _CAMERA_MANAGER_REF.get_latest_snapshot()
-                    if snapshot is None or getattr(snapshot, "rgb_frame", None) is None:
                         time.sleep(0.03)
                         continue
 
-                    frame_id = getattr(snapshot, "frame_id", 0)
+                    # Consume newest raw camera frame directly (independent of MediaPipe / AI Worker delay)
+                    target_frame = None
+                    frame_id = 0
+                    if hasattr(_CAMERA_MANAGER_REF, "get_latest_raw_frame"):
+                        target_frame, frame_id = _CAMERA_MANAGER_REF.get_latest_raw_frame()
+
+                    # Fallback to AI snapshot if raw frame buffer is not populated yet
+                    if target_frame is None:
+                        snapshot = _CAMERA_MANAGER_REF.get_latest_snapshot()
+                        if snapshot is not None and getattr(snapshot, "rgb_frame", None) is not None:
+                            img = snapshot.rgb_frame
+                            target_frame = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                            frame_id = getattr(snapshot, "frame_id", 0)
+
+                    if target_frame is None:
+                        time.sleep(0.02)
+                        continue
+
                     if frame_id > 0 and frame_id == last_sent_frame_id:
                         time.sleep(0.005)
                         continue
                     last_sent_frame_id = frame_id
 
-                    img = snapshot.rgb_frame
-
-                    # Encode to JPEG
-                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                    is_ok, jpeg_buf = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                    # Encode BGR directly to JPEG
+                    is_ok, jpeg_buf = cv2.imencode('.jpg', target_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                     if not is_ok:
                         time.sleep(0.005)
                         continue
