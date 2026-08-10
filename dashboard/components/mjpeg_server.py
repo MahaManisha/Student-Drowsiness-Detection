@@ -66,30 +66,36 @@ class MJPEGStreamHandler(http.server.BaseHTTPRequestHandler):
                         continue
 
                     frame_id = getattr(snapshot, "frame_id", 0)
+                    if frame_id > 0 and frame_id == last_sent_frame_id:
+                        time.sleep(0.005)
+                        continue
+                    last_sent_frame_id = frame_id
+
                     img = snapshot.rgb_frame
 
                     # Encode to JPEG
                     bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-                    is_ok, jpeg_buf = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                    is_ok, jpeg_buf = cv2.imencode('.jpg', bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                     if not is_ok:
-                        time.sleep(0.03)
+                        time.sleep(0.005)
                         continue
 
                     jpeg_bytes = jpeg_buf.tobytes()
 
                     # Write MJPEG boundary frame
-                    self.wfile.write(b'--frame\r\n')
-                    self.wfile.write(b'Content-Type: image/jpeg\r\n')
-                    self.wfile.write(f'Content-Length: {len(jpeg_bytes)}\r\n\r\n'.encode('utf-8'))
-                    self.wfile.write(jpeg_bytes)
-                    self.wfile.write(b'\r\n')
+                    header = (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n'
+                        b'Content-Length: ' + str(len(jpeg_bytes)).encode('utf-8') + b'\r\n\r\n'
+                    )
+                    self.wfile.write(header + jpeg_bytes + b'\r\n')
                     self.wfile.flush()
 
-                    time.sleep(0.03)  # ~30 FPS target
+                    time.sleep(0.005)
                 except (BrokenPipeError, ConnectionResetError):
                     break
                 except Exception as ex:
-                    time.sleep(0.05)
+                    time.sleep(0.01)
         else:
             self.send_error(404, "Not Found")
 

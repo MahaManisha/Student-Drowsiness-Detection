@@ -31,30 +31,47 @@ import textwrap
 from PIL import Image
 import time
 
+from dashboard.components.mjpeg_server import get_mjpeg_stream_port
+
 def render_camera_viewport(snapshot: Any, camera_mgr: Any = None) -> float:
     """
-    Renders ultra-high-performance native C++ HTML5 video feed connected to local MJPEG endpoint.
-    Guarantees hardware-accelerated 30-60 FPS video playback with zero React DOM overhead,
-    zero Base64 parsing, zero HTTP 404 purges, zero frame freezes, and zero disappearing video.
+    Renders live camera video viewport using native HTTP MJPEG stream (http://localhost:8089/video_feed).
+    Eliminates Base64 encoding lag, Streamlit fragment locking, and video freezing permanently.
     """
     t_start = time.perf_counter()
-    
-    try:
-        from dashboard.components.mjpeg_server import get_mjpeg_stream_port
-        port = get_mjpeg_stream_port()
-    except Exception:
-        port = 8089
+    port = get_mjpeg_stream_port()
 
-    stream_url = f"http://localhost:{port}/video_feed"
+    if port > 0:
+        img_html = (
+            f'<div style="width:100%; text-align:center; background-color:#0d0e12; border-radius:12px; overflow:hidden; padding:4px;">'
+            f'<img src="http://localhost:{port}/video_feed" style="width:100%; max-height:460px; object-fit:contain; border-radius:10px; display:block; margin:0 auto;" />'
+            f'</div>'
+        )
+        st.markdown(img_html, unsafe_allow_html=True)
+        t_end = time.perf_counter()
+        return (t_end - t_start) * 1000.0
 
-    # Native HTML5 Live Stream Viewport
-    st.components.v1.html(
-        f"""
-        <div style="width:100%; text-align:center; background-color:#0d0e12; border-radius:12px; overflow:hidden; padding:4px;">
-            <img src="{stream_url}" style="width:100%; max-height:460px; object-fit:contain; border-radius:10px; display:block; margin:0 auto;" onerror="this.src='';" />
-        </div>
-        """,
-        height=470
+    # Fallback to Base64 frame rendering if MJPEG server is unavailable
+    bgr_frame = getattr(snapshot, "bgr_frame", None) if snapshot is not None else None
+    if bgr_frame is None and snapshot is not None and getattr(snapshot, "rgb_frame", None) is not None:
+        bgr_frame = cv2.cvtColor(snapshot.rgb_frame, cv2.COLOR_RGB2BGR)
+
+    if bgr_frame is not None and isinstance(bgr_frame, np.ndarray) and bgr_frame.size > 0:
+        is_ok, jpeg_buf = cv2.imencode('.jpg', bgr_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if is_ok:
+            b64_str = base64.b64encode(jpeg_buf).decode('utf-8')
+            img_html = (
+                f'<div style="width:100%; text-align:center; background-color:#0d0e12; border-radius:12px; overflow:hidden; padding:4px;">'
+                f'<img src="data:image/jpeg;base64,{b64_str}" style="width:100%; max-height:460px; object-fit:contain; border-radius:10px; display:block; margin:0 auto;" />'
+                f'</div>'
+            )
+            st.markdown(img_html, unsafe_allow_html=True)
+            t_end = time.perf_counter()
+            return (t_end - t_start) * 1000.0
+
+    st.markdown(
+        '<div style="width:100%; height:440px; background-color:#0d0e12; border-radius:12px; display:flex; align-items:center; justify-content:center; color:#6B7280;">Connecting camera device...</div>',
+        unsafe_allow_html=True
     )
 
     t_end = time.perf_counter()

@@ -98,9 +98,9 @@ class CameraStream:
             return True
 
         try:
-            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+            temp_cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
             if not temp_cap.isOpened():
-                temp_cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
+                temp_cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
 
             if temp_cap.isOpened():
                 temp_cap.release()
@@ -109,6 +109,36 @@ class CameraStream:
         except Exception as e:
             logger.error(f"Error checking camera availability for source '{self.source}': {e}")
             return False
+
+    def _try_open_backend(self, backend: int) -> Optional[cv2.VideoCapture]:
+        try:
+            cap = cv2.VideoCapture(self.source, backend)
+            if not cap.isOpened():
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                return None
+
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            # Perform a test read to ensure hardware is actively delivering frames
+            ret, frame = cap.read()
+            if ret and frame is not None and frame.size > 0:
+                return cap
+
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return None
+        except Exception as e:
+            logger.warning(f"[THREAD 1] Exception trying backend {backend}: {e}")
+            return None
 
     def start(self) -> bool:
         with self._lock:
@@ -126,30 +156,22 @@ class CameraStream:
                         pass
                     self.cap = None
 
-                # Backend Priority: DSHOW (DirectShow - zero-latency Windows hardware backend) -> MSMF -> CAP_ANY
-                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
+                backends = []
+                if isinstance(self.source, int):
+                    backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]
+                else:
+                    backends = [cv2.CAP_ANY]
 
-                if not self.cap.isOpened():
-                    if self.cap is not None:
-                        self.cap.release()
-                    self.cap = cv2.VideoCapture(self.source, cv2.CAP_MSMF if isinstance(self.source, int) else cv2.CAP_ANY)
+                for backend in backends:
+                    cap = self._try_open_backend(backend)
+                    if cap is not None:
+                        self.cap = cap
+                        break
 
-                if not self.cap.isOpened():
-                    if self.cap is not None:
-                        self.cap.release()
-                    self.cap = cv2.VideoCapture(self.source)
-
-                if not self.cap.isOpened():
+                if self.cap is None or not self.cap.isOpened():
                     logger.error(f"[THREAD 1] Failed to open camera source: {self.source}")
                     self.is_running = False
                     return False
-
-                # Startup Property Order: FOURCC -> WIDTH -> HEIGHT -> FPS -> BUFFERSIZE
-                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                 actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -196,17 +218,14 @@ class CameraStream:
 
                 time.sleep(0.5)
 
-                self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW if isinstance(self.source, int) else cv2.CAP_ANY)
-                if not self.cap.isOpened():
-                    if self.cap is not None:
-                        self.cap.release()
-                    self.cap = cv2.VideoCapture(self.source)
+                backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY] if isinstance(self.source, int) else [cv2.CAP_ANY]
+                for backend in backends:
+                    cap = self._try_open_backend(backend)
+                    if cap is not None:
+                        self.cap = cap
+                        break
 
-                if self.cap.isOpened():
-                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                    self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
-                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if self.cap is not None and self.cap.isOpened():
                     self.consecutive_failed_reads = 0
                     self.last_frame_timestamp = time.time()
                     logger.info("[THREAD 1 WATCHDOG] Camera reconnected successfully.")

@@ -181,9 +181,9 @@ def render_header_fragment(camera_mgr) -> None:
     render_header(telemetry)
 
 
-@st.fragment(run_every=0.2)
-def render_camera_header_fragment(camera_mgr) -> None:
-    """FRAME/STATUS TIER (0.2s): Camera Panel Header Status Pill."""
+@st.fragment(run_every=0.08)
+def render_camera_panel_combined_fragment(camera_mgr) -> None:
+    """Atomic High-Performance Camera Panel Fragment (Viewport + Header + Footer)."""
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
     has_face = bool(
@@ -192,25 +192,15 @@ def render_camera_header_fragment(camera_mgr) -> None:
         or telemetry.get("mar") is not None
         or telemetry.get("head_pose_valid", False)
     )
+    
     render_camera_panel_header(
         is_live=True,
         has_face=has_face,
         state_str=telemetry.get("drowsiness_state", "ALERT"),
         is_stalled=False
     )
-
-
-def render_live_camera_viewport_fragment(camera_mgr) -> None:
-    """Isolated Video Viewport (MJPEG streams natively in browser HTML5 image tag)."""
-    snapshot = camera_mgr.get_latest_snapshot()
     render_camera_viewport(snapshot, camera_mgr)
-
-
-@st.fragment(run_every=0.2)
-def render_camera_footer_fragment(camera_mgr) -> None:
-    """FRAME/STATUS TIER (0.2s): Camera Panel Footer Frame ID & FPS Badge."""
-    snapshot = camera_mgr.get_latest_snapshot()
-    telemetry = snapshot.telemetry if snapshot else {}
+    
     frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
     render_camera_panel_footer(
         fps=telemetry.get("fps", 30.0),
@@ -293,14 +283,8 @@ def render_live_dashboard(camera_mgr) -> None:
     col_center, col_right = st.columns([1.8, 1.2], gap="medium")
 
     with col_center:
-        # Camera Header Fragment (200ms)
-        render_camera_header_fragment(camera_mgr)
-
-        # Isolated Viewport Fragment (33ms)
-        render_live_camera_viewport_fragment(camera_mgr)
-
-        # Camera Footer Fragment (200ms)
-        render_camera_footer_fragment(camera_mgr)
+        # Atomic High-Performance Camera Panel Fragment (50ms)
+        render_camera_panel_combined_fragment(camera_mgr)
 
     with col_right:
         # Fast Telemetry & Decision Panel Fragment (100ms)

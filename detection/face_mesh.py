@@ -7,6 +7,7 @@ landmark mesh grid onto video frames using MediaPipe's classic Solutions API.
 """
 
 import cv2
+import time
 import numpy as np
 import mediapipe as mp
 from typing import Optional, List, Tuple, Dict, Any
@@ -135,7 +136,8 @@ class FaceMeshDetector:
 
         try:
             h, w, _ = frame.shape
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            detect_frame = cv2.resize(frame, (320, 240)) if (w > 320 or h > 240) else frame
+            rgb_frame = cv2.cvtColor(detect_frame, cv2.COLOR_BGR2RGB)
 
             if not getattr(self, "_using_tasks", False):
                 results = self.face_mesh.process(rgb_frame)
