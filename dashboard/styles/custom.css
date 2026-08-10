@@ -6,9 +6,9 @@
   --bg-card-header: #374151;  /* Card header strip */
   --bg-track: #4B5563;        /* Progress bar track */
   
-  --text-primary: #F9FAFB;    /* Off-white primary text */
-  --text-secondary: #9CA3AF;  /* Slate secondary text */
-  --text-muted: #6B7280;      /* Muted text */
+  --text-primary: #FFFFFF;    /* Pure crisp white primary text */
+  --text-secondary: #CBD5E1;  /* Bright slate-200 secondary text */
+  --text-muted: #94A3B8;      /* Bright slate-400 muted text */
   
   --accent-mint: #10B981;     /* Primary Accent / Nominal */
   --accent-amber: #F59E0B;    /* Warning Accent */
@@ -16,8 +16,8 @@
   --accent-danger: #EF4444;   /* Critical Danger Accent */
   --accent-cyan: #38BDF8;     /* Cyan Metric Accent */
 
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(255, 255, 255, 0.16);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-active: rgba(255, 255, 255, 0.25);
   --radius-container: 16px;
   --radius-card: 12px;
   --radius-pill: 9999px;
@@ -28,6 +28,28 @@
   background-color: var(--bg-primary) !important;
   color: var(--text-primary) !important;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Streamlit Native Metric Widget High Contrast Dark Override */
+div[data-testid="stMetricValue"],
+div[data-testid="stMetricValue"] *,
+div[data-testid="stMetricValue"] div {
+  color: #FFFFFF !important;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-weight: 800 !important;
+  opacity: 1 !important;
+}
+
+div[data-testid="stMetricLabel"],
+div[data-testid="stMetricLabel"] *,
+div[data-testid="stMetricLabel"] p,
+div[data-testid="stMetricLabel"] label,
+div[data-testid="stMetricLabel"] span,
+div[data-testid="stMetricLabel"] div {
+  color: #CBD5E1 !important;
+  font-weight: 700 !important;
+  font-size: 0.85rem !important;
+  opacity: 1 !important;
 }
 
 /* Remove default Streamlit top padding & footer */

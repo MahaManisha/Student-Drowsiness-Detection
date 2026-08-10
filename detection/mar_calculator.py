@@ -221,16 +221,6 @@ class MARCalculator:
             # Compute horizontal distance between mouth corners
             h = self.calculate_distance(p1, p5)
 
-            # Outer lip vertical height fusion for backlight robustness across all 3 vertical pairs
-            if outer_lip_landmarks is not None and len(outer_lip_landmarks) >= 8:
-                opts = outer_lip_landmarks.landmark if hasattr(outer_lip_landmarks, "landmark") else outer_lip_landmarks
-                vo1 = self.calculate_distance(opts[1], opts[7])
-                vo2 = self.calculate_distance(opts[2], opts[6])
-                vo3 = self.calculate_distance(opts[3], opts[5])
-                v1 = max(v1, vo1 * 0.75)
-                v2 = max(v2, vo2 * 0.75)
-                v3 = max(v3, vo3 * 0.75)
-
             # Division-by-zero protection
             if h <= 1e-6:
                 logger.warning(

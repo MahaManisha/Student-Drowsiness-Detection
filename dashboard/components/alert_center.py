@@ -47,30 +47,27 @@ def render_alert_center(raw_telemetry: Dict[str, Any]) -> None:
     else:
         border_color = "#EF4444"
 
-    st.markdown('<div class="dash-card">', unsafe_allow_html=True)
-    st.markdown(
-        textwrap.dedent(f"""
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem;">🚨 Real-Time Alert Center</div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                {audio_html}
-                <span class="status-pill {pill_class}" style="font-size: 0.7rem; padding: 3px 8px;">{label_str}</span>
-            </div>
-        </div>
-
-        <div style="background-color: #111827; border-left: 4px solid {border_color}; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);">
-            <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: #9CA3AF; margin-bottom: 4px;">
-                <span>ACTIVE WARNING BANNER</span>
-                <span class="mono-val">Timestamp: {alert_time}</span>
-            </div>
-            <div style="font-size: 0.9rem; font-weight: 700; color: #F9FAFB; margin-bottom: 4px;">
-                {current_msg}
-            </div>
-            <div style="font-size: 0.75rem; color: #9CA3AF;">
-                Alert Duration: <strong class="mono-val" style="color: #F9FAFB;">{closed_dur_str}</strong> | Severity: <strong style="color: {border_color}; text-transform: uppercase;">{severity}</strong>
-            </div>
-        </div>
-        """),
-        unsafe_allow_html=True
+    html = (
+        f'<div class="dash-card">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">'
+        f'<div style="font-weight: 800; color: #F9FAFB; font-size: 1.0rem;">🚨 Real-Time Alert Center</div>'
+        f'<div style="display: flex; gap: 8px; align-items: center;">'
+        f'{audio_html}'
+        f'<span class="status-pill {pill_class}" style="font-size: 0.7rem; padding: 3px 8px;">{label_str}</span>'
+        f'</div>'
+        f'</div>'
+        f'<div style="background-color: #111827; border-left: 4px solid {border_color}; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);">'
+        f'<div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: #9CA3AF; margin-bottom: 4px;">'
+        f'<span>ACTIVE WARNING BANNER</span>'
+        f'<span class="mono-val">Timestamp: {alert_time}</span>'
+        f'</div>'
+        f'<div style="font-size: 0.9rem; font-weight: 700; color: #F9FAFB; margin-bottom: 4px;">'
+        f'{current_msg}'
+        f'</div>'
+        f'<div style="font-size: 0.75rem; color: #9CA3AF;">'
+        f'Alert Duration: <strong class="mono-val" style="color: #F9FAFB;">{closed_dur_str}</strong> | Severity: <strong style="color: {border_color}; text-transform: uppercase;">{severity}</strong>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)

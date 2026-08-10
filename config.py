@@ -97,15 +97,15 @@ HEAD_POSE_LANDMARK_INDICES = [4, 152, 263, 33, 291, 61]
 # ==============================================================================
 # 4. DETECTION THRESHOLDS (PLACEHOLDER VALUES)
 # ==============================================================================
-# Eye Aspect Ratio (EAR) threshold below which an eye is considered closed (Soukupová & Čech 2016 standard)
-EAR_THRESHOLD = 0.21
+# Eye Aspect Ratio (EAR) threshold below which an eye is considered closed (Soukupová & Čech 2016 standard calibrated for MediaPipe)
+EAR_THRESHOLD = 0.24
 
 # Number of consecutive frames the eye must be below EAR_THRESHOLD to trigger drowsiness
 EAR_CONSECUTIVE_FRAMES = 20
 
-# Minimum and maximum consecutive frames for a valid blink (prevents threshold jitter)
-MIN_BLINK_DURATION_FRAMES = 2
-MAX_BLINK_DURATION_FRAMES = 15
+# Minimum and maximum consecutive frames for a valid blink (prevents threshold jitter and captures fast micro-blinks)
+MIN_BLINK_DURATION_FRAMES = 1
+MAX_BLINK_DURATION_FRAMES = 25
 
 # Mouth Aspect Ratio (MAR) threshold above which a mouth is considered yawning (0.25 standard)
 MAR_THRESHOLD = 0.25

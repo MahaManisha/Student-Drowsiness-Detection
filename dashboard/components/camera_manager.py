@@ -156,8 +156,8 @@ class DashboardCameraManager:
         self.classifier = EyeStateClassifier()
         self.temporal_analyzer = TemporalEyeAnalyzer(
             fps=self.camera.fps_target,
-            min_blink_duration=getattr(config, "MIN_BLINK_DURATION_FRAMES", 2),
-            max_blink_duration=getattr(config, "MAX_BLINK_DURATION_FRAMES", 15),
+            min_blink_duration=getattr(config, "MIN_BLINK_DURATION_FRAMES", 1),
+            max_blink_duration=getattr(config, "MAX_BLINK_DURATION_FRAMES", 25),
         )
         self.decision_engine = StudentDrowsinessDecisionEngine()
 
@@ -437,7 +437,9 @@ class DashboardCameraManager:
                 yawn_payload = {
                     "yawn_count": self.yawn_detector.get_yawn_count(),
                     "consecutive_open_frames": self.yawn_detector.get_open_frame_count(),
-                    "yawn_duration_seconds": self.yawn_detector.get_open_duration_seconds()
+                    "yawn_duration_seconds": self.yawn_detector.get_open_duration_seconds(),
+                    "is_active_yawn": getattr(self.yawn_detector, "is_active_yawn", False),
+                    "mar_val": mar_val
                 }
                 pose_payload = {
                     "yaw": yaw,

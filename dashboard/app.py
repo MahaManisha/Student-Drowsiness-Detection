@@ -173,6 +173,10 @@ def render_live_runtime_instrumentation(snapshot: Any, t_st_image_ms: float, st_
 # MULTI-RATE FRAGMENT REFRESH ARCHITECTURE
 # ==============================================================================
 
+# ==============================================================================
+# MULTI-RATE FRAGMENT REFRESH ARCHITECTURE
+# ==============================================================================
+
 @st.fragment(run_every=1.0)
 def render_header_fragment(camera_mgr) -> None:
     """SLOW TIER (1.0s): Top Header Bar (Session Timer, System Status)."""
@@ -181,70 +185,38 @@ def render_header_fragment(camera_mgr) -> None:
     render_header(telemetry)
 
 
-@st.fragment(run_every=0.08)
-def render_camera_panel_combined_fragment(camera_mgr) -> None:
-    """Atomic High-Performance Camera Panel Fragment (Viewport + Header + Footer)."""
-    snapshot = camera_mgr.get_latest_snapshot()
-    telemetry = snapshot.telemetry if snapshot else {}
-    has_face = bool(
-        telemetry.get("has_face", False)
-        or telemetry.get("avg_ear") is not None
-        or telemetry.get("mar") is not None
-        or telemetry.get("head_pose_valid", False)
-    )
-    
-    render_camera_panel_header(
-        is_live=True,
-        has_face=has_face,
-        state_str=telemetry.get("drowsiness_state", "ALERT"),
-        is_stalled=False
-    )
-    render_camera_viewport(snapshot, camera_mgr)
-    
-    frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
-    render_camera_panel_footer(
-        fps=telemetry.get("fps", 30.0),
-        resolution="1280x720",
-        frame_id=frame_id
-    )
-
-
-@st.fragment(run_every=0.1)
+@st.fragment(run_every=0.2)
 def render_fast_telemetry_fragment(camera_mgr) -> None:
     """
-    FAST TIER (0.1s / 100ms):
-    Ocular (EAR), Oral (MAR), Head Pose (Pitch/Yaw/Roll), Risk Score,
-    Confidence, Alert Banner, and XAI Decision Engine.
-    Queries camera_mgr.get_latest_snapshot() on every execution body.
+    FAST TELEMETRY TIER (0.2s / 5 Hz):
+    Ocular (EAR), Oral (MAR), Head Pose, Risk Score, Confidence,
+    Alert Banner, XAI Decision Engine, and Session Statistics Summary.
+    Single unified fragment for maximum performance & zero Streamlit lockup.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
-
-    # Debug Logging to prove dynamic snapshot consumption & telemetry validity
-    frame_id = getattr(snapshot, "frame_id", 0)
-    if "last_logged_ui_frame" not in st.session_state or st.session_state.last_logged_ui_frame != frame_id:
-        if frame_id % 15 == 0 and frame_id > 0:
-            logger.info(
-                f"[REAL-SNAPSHOT] frame_id={frame_id} success={getattr(snapshot, 'success', False)} timestamp={getattr(snapshot, 'timestamp', 0):.3f} "
-                f"avg_ear={telemetry.get('avg_ear')} left_ear={telemetry.get('left_ear')} right_ear={telemetry.get('right_ear')} "
-                f"eye_state={telemetry.get('eye_state')} mar={telemetry.get('mar')} mouth_state={telemetry.get('mouth_state')} "
-                f"pitch={telemetry.get('head_pose_pitch')} yaw={telemetry.get('head_pose_yaw')} roll={telemetry.get('head_pose_roll')} "
-                f"head_pose_valid={telemetry.get('head_pose_valid')} risk={telemetry.get('drowsiness_score')} "
-                f"drowsiness_state={telemetry.get('drowsiness_state')} confidence={telemetry.get('decision_confidence')}"
-            )
-        st.session_state.last_logged_ui_frame = frame_id
 
     render_fast_telemetry_panel(telemetry)
     render_head_pose_panel(telemetry)
     render_decision_panel(telemetry)
 
 
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=0.2)
+def render_bottom_analytics_fragment(camera_mgr) -> None:
+    """
+    MEDIUM TIER (0.2s / 5 Hz):
+    Session Statistics Summary Cards, Real-Time Alert Center, and Alert History Stream.
+    """
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    render_bottom_analytics(telemetry, camera_connected=telemetry.get("has_face", True))
+
+
+@st.fragment(run_every=2.0)
 def render_slow_analytics_fragment(camera_mgr) -> None:
     """
-    SLOW TIER (1.0s / 1 Hz):
-    Bottom Analytics, Plotly Charts, Telemetry History Appending,
-    and Live Runtime Instrumentation.
+    SLOW TIER (2.0s):
+    Plotly Charts, Telemetry History Appending, and Live Runtime Instrumentation.
     """
     snapshot = camera_mgr.get_latest_snapshot()
     telemetry = snapshot.telemetry if snapshot else {}
@@ -267,7 +239,6 @@ def render_slow_analytics_fragment(camera_mgr) -> None:
 
     history_df = pd.DataFrame(st.session_state.telemetry_history)
 
-    render_bottom_analytics(telemetry, camera_connected=telemetry.get("has_face", True))
     render_analytics_dashboard(telemetry, history_df, force_chart_update=False)
     render_live_runtime_instrumentation(snapshot, 0.0, 30.0)
 
@@ -279,18 +250,42 @@ def render_live_dashboard(camera_mgr) -> None:
     # 1. Top Header Bar Fragment (1.0s)
     render_header_fragment(camera_mgr)
 
+    snapshot = camera_mgr.get_latest_snapshot()
+    telemetry = snapshot.telemetry if snapshot else {}
+    has_face = bool(
+        telemetry.get("has_face", False)
+        or telemetry.get("avg_ear") is not None
+        or telemetry.get("mar") is not None
+        or telemetry.get("head_pose_valid", False)
+    )
+
     # 2. Main Live Viewport & Telemetry Grid
     col_center, col_right = st.columns([1.8, 1.2], gap="medium")
 
     with col_center:
-        # Atomic High-Performance Camera Panel Fragment (50ms)
-        render_camera_panel_combined_fragment(camera_mgr)
+        # Native High-Performance MJPEG Camera Viewport
+        render_camera_panel_header(
+            is_live=True,
+            has_face=has_face,
+            state_str=telemetry.get("drowsiness_state", "ALERT"),
+            is_stalled=False
+        )
+        render_camera_viewport(snapshot, camera_mgr)
+        frame_id = getattr(snapshot, "frame_id", telemetry.get("frame_id", 0))
+        render_camera_panel_footer(
+            fps=telemetry.get("fps", 30.0),
+            resolution="1280x720",
+            frame_id=frame_id
+        )
 
     with col_right:
-        # Fast Telemetry & Decision Panel Fragment (100ms)
+        # Fast Telemetry & Decision Panel Fragment (0.2s / 5 Hz)
         render_fast_telemetry_fragment(camera_mgr)
 
-    # 3. Bottom Analytics & Instrumentation Fragment (1.0s)
+    # 3. Bottom Analytics Summary & Alert Center Fragment (0.2s / 5 Hz)
+    render_bottom_analytics_fragment(camera_mgr)
+
+    # 4. Plotly Charts & Instrumentation Fragment (2.0s)
     render_slow_analytics_fragment(camera_mgr)
 
 

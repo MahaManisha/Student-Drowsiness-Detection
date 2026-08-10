@@ -219,8 +219,11 @@ class StudentDrowsinessDecisionEngine:
         # Extract eye closed duration & blinks
         closed_duration = eye_metrics.get("closed_duration_seconds", 0.0)
 
-        # Extract yawn count
+        # Extract yawn parameters
         yawn_count = yawn_metrics.get("yawn_count", 0)
+        yawn_duration = yawn_metrics.get("yawn_duration_seconds", 0.0)
+        is_active_yawn = yawn_metrics.get("is_active_yawn", False)
+        mar_val = yawn_metrics.get("mar_val", None)
 
         # Extract pose parameters
         pitch = pose_metrics.get("pitch", 0.0)
@@ -228,7 +231,12 @@ class StudentDrowsinessDecisionEngine:
 
         # Apply rule components
         abnormal_eye_closure = closed_duration >= self.max_eye_closure_duration
-        abnormal_yawning = yawn_count >= self.yawn_frequency_limit
+        abnormal_yawning = (
+            yawn_count >= 1
+            or is_active_yawn
+            or (yawn_duration >= 0.3)
+            or (mar_val is not None and mar_val >= getattr(config, "MAR_THRESHOLD", 0.25) and yawn_duration >= 0.2)
+        )
         
         # Determine if head pose contribution is allowed (Phase 11.8 Calibration)
         droop_duration = self.consecutive_droop_frames / self.fps if self.fps > 0 else 0.0
@@ -260,8 +268,8 @@ class StudentDrowsinessDecisionEngine:
                 confidence = 0.40
                 reason = "Isolated prolonged eye closure detected. Confidence remains low without other signals."
             elif abnormal_yawning:
-                confidence = 0.30
-                reason = "Isolated yawning detected. Confidence remains low without other signals."
+                confidence = 0.50
+                reason = "Active yawning activity detected."
             else:  # abnormal_head_posture
                 confidence = 0.20
                 reason = "Sustained downward head posture detected. Confidence remains low without other signals."
@@ -298,11 +306,14 @@ class StudentDrowsinessDecisionEngine:
         Score distribution:
         - Prolonged eye closure: Max 50 points
         - Slow blink behavior: Max 15 points
-        - Yawn activity: Max 20 points
+        - Yawn activity: Max 50 points (Active Yawn: min 35-50 pts to trigger DROWSY state)
         - Downward head posture: Max 15 points
         """
         closed_duration = eye_metrics.get("closed_duration_seconds", 0.0)
         yawn_count = yawn_metrics.get("yawn_count", 0)
+        yawn_duration = yawn_metrics.get("yawn_duration_seconds", 0.0)
+        is_active_yawn = yawn_metrics.get("is_active_yawn", False)
+        mar_val = yawn_metrics.get("mar_val", None)
         pitch = pose_metrics.get("pitch", 0.0)
         pose_valid = pose_metrics.get("valid", False)
 
@@ -318,16 +329,25 @@ class StudentDrowsinessDecisionEngine:
         else:
             blink_pts = 0.0
 
-        # 3. Yawn Activity scoring (max 20 pts)
-        if yawn_count >= self.yawn_frequency_limit:
-            yawn_pts = 20.0
+        # 3. Yawn Activity scoring (max 50 pts)
+        # Active yawning (MAR >= threshold & open duration >= 0.2s) allocates 35-50 pts to immediately exceed alert threshold (30.0)
+        is_open_yawn = (
+            is_active_yawn
+            or (yawn_duration >= 0.2)
+            or (mar_val is not None and mar_val >= getattr(config, "MAR_THRESHOLD", 0.25) and yawn_duration >= 0.1)
+        )
+
+        if is_open_yawn:
+            # Active yawn in progress: min 35.0 pts up to 50.0 pts based on duration
+            yawn_pts = min(50.0, 35.0 + (yawn_duration * 10.0))
+        elif yawn_count >= 1:
+            yawn_pts = min(50.0, 35.0 + (yawn_count - 1) * 10.0)
         else:
-            yawn_pts = min(20.0, (yawn_count / self.yawn_frequency_limit) * 20.0)
+            yawn_pts = 0.0
 
         # 4. Downward Head posture deflection scoring (max 15 pts)
-        # Only allow pose to contribute if sustained (>= 3s) or co-occurring with eye closure / yawns
         abnormal_eye_closure = closed_duration >= self.max_eye_closure_duration
-        abnormal_yawning = yawn_count >= self.yawn_frequency_limit
+        abnormal_yawning = is_open_yawn or (yawn_count >= 1)
         droop_duration = self.consecutive_droop_frames / self.fps if self.fps > 0 else 0.0
         sustained_droop = droop_duration >= 3.0
         allow_head_pose = sustained_droop or abnormal_eye_closure or abnormal_yawning
